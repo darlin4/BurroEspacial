@@ -1,5 +1,5 @@
 from vertice import Vertex
-from vertice import VertexNotFoundError
+from vertice import VerticeNotFoundError
 
 
 
