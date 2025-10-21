@@ -23,5 +23,5 @@ class Vertice:
         return self.adjacent[vecino]
 
     def __str__(self):
-        """Representación en texto del vértice y sus conexiones."""
+        """Representación en texto del vértice y sus conexioness."""
         return f"{self.id} conectado a {[x.id for x in self.adjacent]}"
