@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets
 import sys
-from BurroEspacial.views.windows.portada import Portada
+from views.windows.portada import Portada
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
