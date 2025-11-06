@@ -1,4 +1,3 @@
-# views/main_window.py
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import json
@@ -9,6 +8,15 @@ try:
     from components.mapa_widget import MapaWidget
 except ImportError:
     from views.components.mapa_widget import MapaWidget
+
+try:
+    from views.windows.dialog_research_editor import ResearchEditor
+except ImportError:
+    try:
+        from windows.dialog_research_editor import ResearchEditor
+    except ImportError:
+        ResearchEditor = None
+
 
 class MainWindow(tk.Tk):
     def __init__(self, default_json=None):
@@ -31,6 +39,9 @@ class MainWindow(tk.Tk):
         self.btn_highlight = ttk.Button(ctrl, text="Resaltar Hipergigantes", command=self.highlight_hyper)
         self.btn_highlight.pack(fill="x", pady=6)
 
+        self.btn_edit_research = ttk.Button(ctrl, text="Editar Investigación", command=self.on_edit_research)
+        self.btn_edit_research.pack(fill="x", pady=6)
+
         self.status = tk.Label(ctrl, text="Lista para cargar constelaciones", wraplength=160)
         self.status.pack(fill="x", pady=8)
 
@@ -43,9 +54,9 @@ class MainWindow(tk.Tk):
             except Exception as e:
                 traceback.print_exc()
                 messagebox.showerror("Error", f"No se pudo cargar JSON por defecto:\n{e}")
-
     def on_load(self):
-        path = filedialog.askopenfilename(title="Seleccionar JSON", filetypes=[("JSON", "*.json"), ("Todos los archivos", "*.*")])
+        path = filedialog.askopenfilename(title="Seleccionar JSON",
+                                          filetypes=[("JSON", "*.json"), ("Todos los archivos", "*.*")])
         if not path:
             return
         try:
@@ -88,3 +99,14 @@ class MainWindow(tk.Tk):
                     cx, cy = to_canvas(x, y)
                     r = max(3, s.get("radius", 0.5) * 6)
                     self.mapa.canvas.create_rectangle(cx - r - 6, cy - r - 6, cx + r + 6, cy + r + 6, outline="yellow", width=3)
+
+    def on_edit_research(self):
+        if ResearchEditor is None:
+            messagebox.showerror('Error', 'Dialogo de edición no disponible')
+            return
+        data = getattr(self.mapa, 'data', None)
+        if not data:
+            messagebox.showinfo('Info', 'Carga primero un JSON con constelaciones')
+            return
+        dlg = ResearchEditor(self, data)
+        dlg.grab_set()
