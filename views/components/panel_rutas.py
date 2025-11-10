@@ -56,11 +56,25 @@ def ruta_maxima(estrella_origen, salud_inicial, edad, burroenergia, pasto_bodega
     """Calcula la ruta más larga posible antes de que el burro muera."""
     mejor_ruta = []
     max_estrellas = 0
+    
+    # Factores de consumo según salud (más realistas)
+    factores_salud = {
+        "excelente": 0.5,  # Consume menos energía
+        "buena": 0.7,
+        "mala": 1.0,
+        "moribundo": 1.5,
+        "muerto": 999.0
+    }
+    
+    factor_consumo = factores_salud.get(salud_inicial.lower(), 1.0)
 
-    def dfs(actual, energia, pasto, visitadas):
+    def dfs(actual, energia, pasto, tiempo_vida, visitadas, pasos_detalle):
         nonlocal mejor_ruta, max_estrellas
-        if energia <= 0 or pasto <= 0:
+        
+        # Condiciones de muerte
+        if energia <= 0 or pasto <= 0 or tiempo_vida <= 0:
             return
+            
         if len(visitadas) > max_estrellas:
             mejor_ruta = visitadas.copy()
             max_estrellas = len(visitadas)
@@ -68,22 +82,56 @@ def ruta_maxima(estrella_origen, salud_inicial, edad, burroenergia, pasto_bodega
         for destino, distancia in grafo.get(actual, {}).items():
             if destino in visitadas:
                 continue
-            consumo_energia = distancia * 1.2
-            consumo_pasto = distancia * 0.7
+            
+            # Cálculos de consumo más realistas
+            # Consumo de energía: distancia * factor de salud (0.5-1.5% por unidad)
+            consumo_energia = distancia * factor_consumo * 0.5
+            
+            # Consumo de pasto: aproximadamente 0.05 kg por unidad de distancia
+            consumo_pasto = distancia * 0.05
+            
+            # Tiempo de vida: se reduce por la distancia viajada
+            consumo_tiempo = distancia
+            
+            # Calcular nuevos valores
             nueva_energia = energia - consumo_energia
             nuevo_pasto = pasto - consumo_pasto
-            if nueva_energia > 0 and nuevo_pasto > 0:
-                dfs(destino, nueva_energia, nuevo_pasto, visitadas + [destino])
+            nuevo_tiempo = tiempo_vida - consumo_tiempo
+            
+            # Si necesita pasto y tiene disponible, comer automáticamente
+            if nueva_energia < 50 and nuevo_pasto > 0:
+                # Comer hasta recuperar energía (máximo disponible)
+                pasto_a_comer = min(nuevo_pasto, (50 - nueva_energia) / 5)  # 1kg = 5% energía
+                nueva_energia += pasto_a_comer * 5
+                nuevo_pasto -= pasto_a_comer
+            
+            # Verificar si puede continuar
+            if nueva_energia > 0 and nuevo_pasto > 0 and nuevo_tiempo > 0:
+                nuevo_detalle = pasos_detalle + [{
+                    'destino': destino,
+                    'distancia': distancia,
+                    'energia_consumida': consumo_energia,
+                    'pasto_consumido': consumo_pasto,
+                    'energia_restante': nueva_energia,
+                    'pasto_restante': nuevo_pasto
+                }]
+                dfs(destino, nueva_energia, nuevo_pasto, nuevo_tiempo, 
+                    visitadas + [destino], nuevo_detalle)
 
-    dfs(estrella_origen, burroenergia, pasto_bodega, [estrella_origen])
+    # Tiempo de vida inicial basado en la edad (más joven = más tiempo)
+    tiempo_vida_inicial = max(100, 500 - (edad * 10))
+    
+    dfs(estrella_origen, burroenergia, pasto_bodega, tiempo_vida_inicial, [estrella_origen], [])
 
-    estado_final = estado_salud_por_energia(burroenergia - (100 - burroenergia))
+    estado_final = estado_salud_por_energia(burroenergia - (max_estrellas * 10))
     return {
         "ruta": mejor_ruta,
         "estrellas_visitadas": max_estrellas,
         "estado_final": estado_final,
         "energia_inicial": burroenergia,
-        "pasto_inicial": pasto_bodega
+        "pasto_inicial": pasto_bodega,
+        "factor_salud": salud_inicial,
+        "edad": edad
     }
 
 
@@ -112,7 +160,21 @@ class PanelRutas(tk.Frame):
         try:
             self.grafo = cargar_grafo_desde_json(ruta_json)
             self._update_origenes()
+            
+            # Actualizar label de estado
+            num_estrellas = len(self.grafo)
+            num_conexiones = sum(len(vecinos) for vecinos in self.grafo.values())
+            self.label_status.config(
+                text=f"✅ Grafo cargado: {num_estrellas} estrellas, {num_conexiones} conexiones",
+                fg="#44ff44"
+            )
+            print(f"✅ Grafo cargado: {num_estrellas} estrellas, {num_conexiones} conexiones")
+            
         except Exception as e:
+            self.label_status.config(
+                text=f"❌ Error al cargar grafo",
+                fg="#ff4444"
+            )
             messagebox.showerror("Error", f"No se pudo cargar el grafo:\n{e}")
 
     # --- Construcción de UI ---
@@ -164,6 +226,16 @@ class PanelRutas(tk.Frame):
 
         self.btn_calc = ttk.Button(actions, text="Calcular Ruta", command=self._on_calcular)
         self.btn_calc.pack(side="left", padx=6)
+        
+        # Label de estado
+        self.label_status = tk.Label(
+            self, 
+            text="Carga un JSON o el sistema usará el cargado en el mapa",
+            bg="#0b0c10",
+            fg="#888",
+            font=("Arial", 9)
+        )
+        self.label_status.pack(pady=3)
 
         # Resultados
         frm_res = tk.LabelFrame(self, text="Resultados", bg="#0b0c10", fg="white")
@@ -204,17 +276,69 @@ class PanelRutas(tk.Frame):
             messagebox.showerror("Error", "Verifica que edad, energía y pasto sean números válidos")
             return
 
+        # Validaciones
+        if not (0 <= energia <= 100):
+            messagebox.showerror("Error", "La burroenergía debe estar entre 0 y 100%")
+            return
+        
+        if pasto <= 0:
+            messagebox.showerror("Error", "El pasto debe ser mayor a 0 kg")
+            return
+        
+        if edad < 0:
+            messagebox.showerror("Error", "La edad no puede ser negativa")
+            return
+
+        # Calcular ruta
         res = ruta_maxima(origen, salud, edad, energia, pasto, self.grafo)
 
         # Mostrar resultados
         self.txt.delete("1.0", tk.END)
-        self.txt.insert(tk.END, "═" * 70 + "\n")
-        self.txt.insert(tk.END, "RUTA CALCULADA (máximas estrellas por condiciones iniciales)\n")
-        self.txt.insert(tk.END, "═" * 70 + "\n\n")
-        self.txt.insert(tk.END, f"Origen: {origen}\n")
-        self.txt.insert(tk.END, f"Estrellas visitadas: {res['estrellas_visitadas']}\n")
-        self.txt.insert(tk.END, f"Ruta: {' -> '.join(res['ruta']) if res['ruta'] else 'Ninguna'}\n")
-        self.txt.insert(tk.END, f"Estado final (aprox.): {res['estado_final']}\n")
-        self.txt.insert(tk.END, f"Energía inicial: {res['energia_inicial']}% | Pasto inicial: {res['pasto_inicial']} kg\n")
-        self.txt.insert(tk.END, "\n" + "─" * 70 + "\n")
+        self.txt.insert(tk.END, "═" * 80 + "\n")
+        self.txt.insert(tk.END, "  RUTA CALCULADA - MÁXIMAS ESTRELLAS CON CONDICIONES INICIALES\n")
+        self.txt.insert(tk.END, "═" * 80 + "\n\n")
+        
+        # Condiciones iniciales
+        self.txt.insert(tk.END, "📋 CONDICIONES INICIALES:\n")
+        self.txt.insert(tk.END, f"  • Estrella Origen: {origen}\n")
+        self.txt.insert(tk.END, f"  • Estado de Salud: {salud.upper()}\n")
+        self.txt.insert(tk.END, f"  • Edad: {edad} años\n")
+        self.txt.insert(tk.END, f"  • Burroenergía: {energia}%\n")
+        self.txt.insert(tk.END, f"  • Pasto en Bodega: {pasto} kg\n\n")
+        
+        # Resultados
+        self.txt.insert(tk.END, "🎯 RESULTADOS:\n")
+        self.txt.insert(tk.END, f"  • Estrellas Visitadas: {res['estrellas_visitadas']}\n")
+        
+        if res['ruta'] and len(res['ruta']) > 0:
+            self.txt.insert(tk.END, f"  • Estado Final (estimado): {res['estado_final'].upper()}\n\n")
+            
+            # Mostrar ruta
+            self.txt.insert(tk.END, "🛣️  RUTA ÓPTIMA:\n")
+            self.txt.insert(tk.END, "  " + " → ".join(res['ruta']) + "\n\n")
+            
+            # Calcular distancia total
+            distancia_total = 0
+            for i in range(len(res['ruta']) - 1):
+                actual = res['ruta'][i]
+                siguiente = res['ruta'][i + 1]
+                if siguiente in self.grafo.get(actual, {}):
+                    distancia_total += self.grafo[actual][siguiente]
+            
+            self.txt.insert(tk.END, f"  📏 Distancia Total: {distancia_total:.1f} años luz\n")
+            
+            # Información adicional
+            self.txt.insert(tk.END, "\n💡 INFORMACIÓN:\n")
+            self.txt.insert(tk.END, f"  • El burro visita {res['estrellas_visitadas']} estrellas en total\n")
+            self.txt.insert(tk.END, f"  • Cálculo basado únicamente en valores iniciales\n")
+            self.txt.insert(tk.END, f"  • Los caminos bloqueados no son considerados\n")
+            
+        else:
+            self.txt.insert(tk.END, "\n⚠️  NO SE ENCONTRÓ RUTA POSIBLE\n")
+            self.txt.insert(tk.END, "  Posibles razones:\n")
+            self.txt.insert(tk.END, "  • Energía o pasto insuficientes\n")
+            self.txt.insert(tk.END, "  • Todos los caminos están bloqueados\n")
+            self.txt.insert(tk.END, "  • Estrella origen aislada\n")
+        
+        self.txt.insert(tk.END, "\n" + "═" * 80 + "\n")
 
