@@ -15,6 +15,11 @@ except ImportError:
     from views.components.panel_rutas import PanelRutas
 
 try:
+    from components.panel_control import PanelControlCaminos
+except ImportError:
+    from views.components.panel_control import PanelControlCaminos
+
+try:
     from views.windows.dialog_research_editor import ResearchEditor
 except ImportError:
     try:
@@ -69,6 +74,10 @@ class MainWindow(tk.Tk):
         # Botón para abrir el panel de cálculo de ruta
         self.btn_open_rutas = ttk.Button(ctrl, text="Calcular Ruta Óptima", command=self.on_open_panel_rutas)
         self.btn_open_rutas.pack(fill="x", pady=6)
+        
+        # Botón para gestionar caminos bloqueados
+        self.btn_control_caminos = ttk.Button(ctrl, text="Gestionar Caminos 🚧", command=self.on_open_control_caminos)
+        self.btn_control_caminos.pack(fill="x", pady=6)
 
         # === Estado ===
         self.status = tk.Label(
@@ -184,6 +193,36 @@ class MainWindow(tk.Tk):
                 panel.set_grafo_from_json(self.last_json_path)
             except Exception:
                 pass
+
+    # === Abrir panel de control de caminos ===
+    def on_open_control_caminos(self):
+        """Abre el panel para bloquear/habilitar caminos entre estrellas"""
+        data = getattr(self.mapa, 'data', None)
+        if not data:
+            messagebox.showinfo('Info', 'Carga primero un JSON con constelaciones')
+            return
+        
+        top = tk.Toplevel(self)
+        top.title("Control de Caminos - Bloqueo/Habilitación")
+        top.geometry("800x700")
+        top.configure(bg="#0b0c10")
+
+        panel = PanelControlCaminos(top, bg="#0b0c10")
+        panel.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Cargar datos del JSON
+        if self.last_json_path:
+            panel.cargar_datos(self.last_json_path, data)
+            
+            # Callback para recargar el mapa cuando se bloqueen/habiliten caminos
+            def on_cambio():
+                try:
+                    # Recargar el mapa con los datos actualizados
+                    self.mapa.load(data)
+                except Exception as e:
+                    print(f"Error al recargar mapa: {e}")
+            
+            panel.set_on_cambio_callback(on_cambio)
 
 
 if __name__ == "__main__":
