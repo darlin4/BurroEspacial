@@ -183,8 +183,7 @@ class MainWindow(tk.Tk):
         top.title("Ruta Óptima - Máximas estrellas")
         top.geometry("720x640")
         top.configure(bg="#0b0c10")
-
-        panel = PanelRutas(top, bg="#0b0c10")
+        panel = PanelRutas(top, mapa=self.mapa, bg="#0b0c10")
         panel.pack(fill="both", expand=True)
 
         # Si ya hay un JSON cargado, preparar el grafo

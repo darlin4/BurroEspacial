@@ -1,13 +1,39 @@
 from PyQt5 import QtWidgets, QtGui, QtCore
 import sys, os, threading
-from playsound import playsound
+try:
+    from playsound import playsound
+except Exception:
+    playsound = None
+
 
 def play_sound_async(path):
-    """Reproduce un sonido en segundo plano."""
-    if os.path.exists(path):
-        threading.Thread(target=playsound, args=(path,), daemon=True).start()
-    else:
+    """Reproduce un sonido en segundo plano. Intenta usar playsound, sino winsound (Windows), sino imprime aviso."""
+    if not os.path.exists(path):
         print(f"⚠️ No se encontró el archivo: {path}")
+        return
+
+    def _ps():
+        try:
+            if playsound is not None:
+                playsound(path)
+                return
+        except Exception:
+            pass
+        # fallback winsound on Windows
+        try:
+            import winsound
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            return
+        except Exception:
+            pass
+        # última opción, no bloquear: intentar con el módulo del proyecto si existe
+        try:
+            # no hacemos nada más si no podemos reproducir
+            pass
+        except Exception:
+            pass
+
+    threading.Thread(target=_ps, daemon=True).start()
 
 class Portada(QtWidgets.QWidget):
     def __init__(self):
@@ -78,12 +104,18 @@ class Portada(QtWidgets.QWidget):
         self.timer_color.start(600)
         self.toggle = True
 
-        # === Ruta del audio ===
-        self.audio_path = "BurroEspacial/assets/burrocantando2.wav"
+        # === Ruta del audio (ruta absoluta dentro del repo) ===
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        self.audio_path = os.path.join(repo_root, 'assets', 'burrocantando2.wav')
 
         # Mantener referencias para que no las borre el GC
         self.fade = None
         self.anim_texto = None
+        # Reproducir sonido de inicio al mostrar la portada (comportamiento original)
+        try:
+            play_sound_async(self.audio_path)
+        except Exception as e:
+            print(f"No se pudo reproducir sonido de portada: {e}")
 
     def cambiar_color(self):
         """Efecto parpadeo del botón."""

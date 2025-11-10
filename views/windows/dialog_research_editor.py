@@ -18,11 +18,11 @@ class ResearchEditor(tk.Toplevel):
         frm = tk.Frame(self)
         frm.pack(fill='both', expand=True, padx=8, pady=8)
 
-        cols = ('id', 'label', 'coord', 'research_cost', 'research_life')
+        cols = ('id', 'label', 'coord', 'research_cost', 'research_life', 'research_health')
         self.tree = ttk.Treeview(frm, columns=cols, show='headings', selectmode='browse')
         for c in cols:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=120 if c != 'label' else 180)
+            self.tree.column(c, width=120 if c not in ('label', 'research_health') else 180)
         self.tree.pack(side='left', fill='both', expand=True)
 
         scr = ttk.Scrollbar(frm, orient='vertical', command=self.tree.yview)
@@ -48,6 +48,10 @@ class ResearchEditor(tk.Toplevel):
         self.var_life = tk.DoubleVar(value=0.0)
         tk.Entry(right, textvariable=self.var_life).pack(fill='x')
 
+        tk.Label(right, text='Research health delta / time (int)').pack(anchor='w', pady=(8,0))
+        self.var_health = tk.IntVar(value=0)
+        tk.Entry(right, textvariable=self.var_health).pack(fill='x')
+
         btn_frame = tk.Frame(right)
         btn_frame.pack(fill='x', pady=12)
         ttk.Button(btn_frame, text='Guardar cambios', command=self.on_save).pack(fill='x')
@@ -71,7 +75,8 @@ class ResearchEditor(tk.Toplevel):
                 coord_str = f"{coord.get('x',0)},{coord.get('y',0)}"
                 cost = s.get('research_energy_cost_per_time', 0)
                 life = s.get('research_life_delta_per_time', 0)
-                self.tree.insert('', 'end', iid=str(sid), values=(sid, label, coord_str, cost, life))
+                health = s.get('research_health_delta_per_time', 0)
+                self.tree.insert('', 'end', iid=str(sid), values=(sid, label, coord_str, cost, life, health))
 
     def on_select(self, event=None):
         sel = self.tree.selection()
@@ -85,6 +90,7 @@ class ResearchEditor(tk.Toplevel):
         self.var_label.set(star.get('label',''))
         self.var_cost.set(float(star.get('research_energy_cost_per_time', 0)))
         self.var_life.set(float(star.get('research_life_delta_per_time', 0)))
+        self.var_health.set(int(star.get('research_health_delta_per_time', 0)))
 
     def find_star_by_id(self, sid: int):
         for c in self.data.get('constellations', []):
@@ -106,13 +112,15 @@ class ResearchEditor(tk.Toplevel):
         try:
             cost = float(self.var_cost.get())
             life = float(self.var_life.get())
+            health = int(self.var_health.get())
         except Exception:
             messagebox.showerror('Error', 'Valores inválidos, deben ser numéricos')
             return
         star['research_energy_cost_per_time'] = cost
         star['research_life_delta_per_time'] = life
-        # actualizar fila
-        self.tree.item(str(star['id']), values=(star['id'], star.get('label',''), f"{star.get('coordenates',{}).get('x',0)},{star.get('coordenates',{}).get('y',0)}", cost, life))
+        star['research_health_delta_per_time'] = health
+        # actualizar fila (incluye health)
+        self.tree.item(str(star['id']), values=(star['id'], star.get('label',''), f"{star.get('coordenates',{}).get('x',0)},{star.get('coordenates',{}).get('y',0)}", cost, life, health))
         messagebox.showinfo('Guardado', f'Parámetros guardados para estrella {star.get("label")}')
 
     def on_save_file(self):
