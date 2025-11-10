@@ -10,6 +10,11 @@ except ImportError:
     from views.components.mapa_widget import MapaWidget
 
 try:
+    from components.panel_rutas import PanelRutas
+except ImportError:
+    from views.components.panel_rutas import PanelRutas
+
+try:
     from views.windows.dialog_research_editor import ResearchEditor
 except ImportError:
     try:
@@ -24,6 +29,9 @@ class MainWindow(tk.Tk):
         self.title("Burro Espacial - Centro de Control 🚀")
         self.geometry("1000x820")
         self.configure(bg="#0b0c10")
+
+        # Guardar última ruta JSON cargada (para el panel de rutas)
+        self.last_json_path = default_json
 
         # === Animación de aparición (fade-in) ===
         self.fade_in()
@@ -58,6 +66,9 @@ class MainWindow(tk.Tk):
 
         self.btn_edit_research = ttk.Button(ctrl, text="Editar Investigación", command=self.on_edit_research)
         self.btn_edit_research.pack(fill="x", pady=6)
+        # Botón para abrir el panel de cálculo de ruta
+        self.btn_open_rutas = ttk.Button(ctrl, text="Calcular Ruta Óptima", command=self.on_open_panel_rutas)
+        self.btn_open_rutas.pack(fill="x", pady=6)
 
         # === Estado ===
         self.status = tk.Label(
@@ -74,6 +85,7 @@ class MainWindow(tk.Tk):
                     data = json.load(f)
                 self.mapa.load(data)
                 self.status.config(text=f"Cargado: {os.path.basename(default_json)}")
+                self.last_json_path = default_json
             except Exception as e:
                 traceback.print_exc()
                 messagebox.showerror("Error", f"No se pudo cargar JSON por defecto:\n{e}")
@@ -103,6 +115,7 @@ class MainWindow(tk.Tk):
                 data = json.load(f)
             self.mapa.load(data)
             self.status.config(text=f"Cargado: {os.path.basename(path)}")
+            self.last_json_path = path
         except Exception as e:
             traceback.print_exc()
             messagebox.showerror("Error", f"No se pudo cargar JSON:\n{e}")
@@ -154,6 +167,23 @@ class MainWindow(tk.Tk):
             return
         dlg = ResearchEditor(self, data)
         dlg.grab_set()
+
+    # === Abrir panel de cálculo de rutas ===
+    def on_open_panel_rutas(self):
+        top = tk.Toplevel(self)
+        top.title("Ruta Óptima - Máximas estrellas")
+        top.geometry("720x640")
+        top.configure(bg="#0b0c10")
+
+        panel = PanelRutas(top, bg="#0b0c10")
+        panel.pack(fill="both", expand=True)
+
+        # Si ya hay un JSON cargado, preparar el grafo
+        if self.last_json_path and os.path.exists(self.last_json_path):
+            try:
+                panel.set_grafo_from_json(self.last_json_path)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ Uso:
 """
 import sys
 import os
+from views.components.panel_rutas import ruta_maxima, cargar_grafo_desde_json
+
 
 if __name__ == '__main__':
     args = sys.argv[1:]

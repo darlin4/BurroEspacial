@@ -23,7 +23,7 @@ class Portada(QtWidgets.QWidget):
         # === Imagen de fondo ===
         self.background = QtWidgets.QLabel(self)
         self.background.setGeometry(0, 0, 1000, 700)
-        pixmap = QtGui.QPixmap("assets/por.jpg")
+        pixmap = QtGui.QPixmap("BurroEspacial/assets/por.jpg")
         pixmap = pixmap.scaled(950, 650, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
         self.background.setPixmap(pixmap)
         self.background.setAlignment(QtCore.Qt.AlignCenter)
@@ -79,7 +79,7 @@ class Portada(QtWidgets.QWidget):
         self.toggle = True
 
         # === Ruta del audio ===
-        self.audio_path = "assets/burrocantando2.wav"
+        self.audio_path = "BurroEspacial/assets/burrocantando2.wav"
 
         # Mantener referencias para que no las borre el GC
         self.fade = None
