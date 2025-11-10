@@ -7,13 +7,15 @@ from typing import Dict, Any
 class ResearchEditor(tk.Toplevel):
     """Dialog para revisar y editar los parámetros de investigación por estrella."""
 
-    def __init__(self, parent: tk.Tk, data: Dict[str, Any]):
+    def __init__(self, parent: tk.Tk, data: Dict[str, Any], on_change=None):
         super().__init__(parent)
         self.title('Editor de investigación por estrella')
         self.geometry('700x420')
         self.parent = parent
         # trabajamos sobre la referencia del dict en memoria
         self.data = data
+        # callback opcional que se ejecuta cuando el usuario guarda cambios
+        self.on_change = on_change
 
         frm = tk.Frame(self)
         frm.pack(fill='both', expand=True, padx=8, pady=8)
@@ -122,6 +124,12 @@ class ResearchEditor(tk.Toplevel):
         # actualizar fila (incluye health)
         self.tree.item(str(star['id']), values=(star['id'], star.get('label',''), f"{star.get('coordenates',{}).get('x',0)},{star.get('coordenates',{}).get('y',0)}", cost, life, health))
         messagebox.showinfo('Guardado', f'Parámetros guardados para estrella {star.get("label")}')
+        # llamar callback si se proporcionó (por ejemplo para que el panel recargue datos)
+        try:
+            if callable(self.on_change):
+                self.on_change()
+        except Exception:
+            pass
 
     def on_save_file(self):
         path = filedialog.asksaveasfilename(title='Guardar constelaciones como...', defaultextension='.json', filetypes=[('JSON','*.json')])
@@ -131,5 +139,10 @@ class ResearchEditor(tk.Toplevel):
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
             messagebox.showinfo('Guardado', f'Archivo guardado en {path}')
+            try:
+                if callable(self.on_change):
+                    self.on_change()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror('Error', f'No se pudo guardar el archivo:\n{e}')

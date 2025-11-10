@@ -174,7 +174,19 @@ class MainWindow(tk.Tk):
         if not data:
             messagebox.showinfo('Info', 'Carga primero un JSON con constelaciones')
             return
-        dlg = ResearchEditor(self, data)
+        # callback para notificar cambios en los parámetros de investigación
+        def _on_research_change():
+            try:
+                # si el panel de rutas está abierto, recargar grafo desde datos en memoria
+                if hasattr(self, 'panel_rutas') and self.panel_rutas is not None:
+                    try:
+                        self.panel_rutas.set_grafo_from_data(self.mapa.data)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        dlg = ResearchEditor(self, data, on_change=_on_research_change)
         dlg.grab_set()
 
     # === Abrir panel de cálculo de rutas ===
@@ -187,11 +199,24 @@ class MainWindow(tk.Tk):
         panel.pack(fill="both", expand=True)
 
         # Si ya hay un JSON cargado, preparar el grafo
-        if self.last_json_path and os.path.exists(self.last_json_path):
+        # Preferir datos en memoria (si el usuario los editó en ResearchEditor)
+        data_en_memoria = getattr(self.mapa, 'data', None)
+        if data_en_memoria:
             try:
-                panel.set_grafo_from_json(self.last_json_path)
+                panel.set_grafo_from_data(data_en_memoria)
             except Exception:
-                pass
+                # fallback a cargar desde archivo si hay ruta
+                if self.last_json_path and os.path.exists(self.last_json_path):
+                    try:
+                        panel.set_grafo_from_json(self.last_json_path)
+                    except Exception:
+                        pass
+        else:
+            if self.last_json_path and os.path.exists(self.last_json_path):
+                try:
+                    panel.set_grafo_from_json(self.last_json_path)
+                except Exception:
+                    pass
 
     # === Abrir panel de control de caminos ===
     def on_open_control_caminos(self):

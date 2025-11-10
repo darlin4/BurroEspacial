@@ -208,6 +208,53 @@ class PanelRutas(tk.Frame):
         except Exception:
             pass
 
+    def set_grafo_from_data(self, data: dict):
+        """Carga el grafo desde un diccionario ya parseado (en memoria).
+
+        Esto se usa cuando el usuario edita parámetros en memoria (ResearchEditor)
+        y no quiere sobrescribir/guardar todavía el JSON en disco.
+        """
+        try:
+            # construir grafo en el mismo formato que cargar_grafo_desde_json
+            grafo = {}
+            for const in data.get("constellations", []):
+                for star in const.get("starts", []):
+                    nombre = star.get("label")
+                    if not nombre:
+                        continue
+                    grafo.setdefault(nombre, {})
+                    for enlace in star.get("linkedTo", []):
+                        if enlace.get("blocked", False):
+                            continue
+                        destino_id = enlace.get("starId")
+                        distancia = enlace.get("distance")
+                        # buscar label destino
+                        destino_nombre = None
+                        for c2 in data.get("constellations", []):
+                            for s2 in c2.get("starts", []):
+                                if s2.get("id") == destino_id:
+                                    destino_nombre = s2.get("label")
+                                    break
+                            if destino_nombre:
+                                break
+                        if destino_nombre:
+                            grafo[nombre][destino_nombre] = distancia
+
+            self.grafo = grafo
+            self._update_origenes()
+            # update status label if present
+            try:
+                num_estrellas = len(self.grafo)
+                num_conexiones = sum(len(vecinos) for vecinos in self.grafo.values())
+                self.label_status.config(
+                    text=f"✅ Grafo cargado (memoria): {num_estrellas} estrellas, {num_conexiones} conexiones",
+                    fg="#44ff44"
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo cargar el grafo desde datos en memoria:\n{e}")
+
     # --- Construcción de UI ---
     def _build_ui(self):
         # Título
@@ -511,6 +558,7 @@ class PanelRutas(tk.Frame):
         self.txt.insert(tk.END, "══" + "═" * 78 + "\n\n")
 
         processed_hyper = False
+        died_during_sim = False
         for idx, paso in enumerate(pasos, start=1):
             destino = paso.get('hacia')
             desde = paso.get('desde')
@@ -529,6 +577,37 @@ class PanelRutas(tk.Frame):
                 line = f"{idx}. {desde} -> {destino} (dist {paso.get('distancia')}) | Vida: {vida:.1f} | Pasto comido: {eaten}\n"
             self.txt.insert(tk.END, line)
             self.txt.see(tk.END)
+
+            # Si en este paso la vida se agotó, detener simulación inmediatamente
+            try:
+                if vida is not None and float(vida) <= 0:
+                    died_during_sim = True
+                    self.txt.insert(tk.END, f"\n⚰️  El burro ha muerto al llegar a {destino}. Simulación detenida.\n")
+                    # intentar reproducir sonido de muerte ahora
+                    try:
+                        from pathlib import Path
+                        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                        candidates = [
+                            os.path.join(repo_root, 'assets', 'muerto.wav'),
+                            os.path.join(repo_root, 'assets', 'burrocantando2.wav')
+                        ]
+                        played = False
+                        for c in candidates:
+                            if Path(c).exists():
+                                try:
+                                    if SoundHelper is not None:
+                                        SoundHelper.play_sound(c)
+                                        played = True
+                                        break
+                                except Exception:
+                                    played = False
+                        if not played:
+                            self.txt.insert(tk.END, "⚰️  (No se pudo reproducir sonido de muerte)\n")
+                    except Exception:
+                        pass
+                    break
+            except Exception:
+                pass
 
             # dibujar ruta parcial en el mapa
             try:

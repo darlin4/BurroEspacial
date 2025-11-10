@@ -31,7 +31,10 @@
             "y": 34
           },
           "hypergiant": false,
-          "galaxy": 1
+          "galaxy": 1,
+          "research_energy_cost_per_time": 0.9,
+          "research_life_delta_per_time": 0.8,
+          "research_health_delta_per_time": 4
         },
         {
           "id": 2,
