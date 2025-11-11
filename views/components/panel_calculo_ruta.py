@@ -428,7 +428,7 @@ class PanelCalculoRuta(tk.Frame):
 		En Windows se usa winsound. En otros sistemas intenta con simpleaudio si estuviera instalado.
 		"""
 		import os, sys
-		ruta = os.path.join(os.path.dirname(sys.modules.get(__name__).__file__), "..", "..", "assets", "sounds", "burro.wav")
+		ruta = os.path.join(os.path.dirname(sys.modules.get(__name__).__file__), "..", "..", "assets", "burro.wav")
 		try:
 			if os.path.exists(ruta):
 				try:
