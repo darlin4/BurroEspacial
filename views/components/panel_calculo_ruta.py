@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 
 class PanelCalculoRuta(tk.Frame):
@@ -120,6 +120,9 @@ class PanelCalculoRuta(tk.Frame):
 				self.mapa_widget.highlight_route(resultado["ruta"])
 			except Exception:
 				pass
+		# Reproducir audio de muerte si ocurrió
+		if resultado.get("murio"):
+			self._reproducir_audio_muerte()
 
 	def _refrescar_origenes(self):
 		grafo = self.grafo_provider() if callable(self.grafo_provider) else {}
@@ -163,8 +166,9 @@ class PanelCalculoRuta(tk.Frame):
 		def log(line):
 			log_lines.append(line)
 
-		FACTOR_ENERGIA = 0.15  # % energía por unidad de distancia
-		FACTOR_PASTO = 0.025   # kg pasto por unidad de distancia
+		# Factores de consumo calibrados para permitir varios saltos y aún así poder morir
+		FACTOR_ENERGIA = 0.35   # % energía por unidad de distancia (p.ej. 120 -> 42%)
+		FACTOR_PASTO = 0.02     # kg pasto por unidad de distancia (p.ej. 120 -> 2.4kg)
 
 		log(f"CALCULANDO RUTA DESDE: {estrella_origen}")
 		log(f"   Energía inicial: {burroenergia:.1f}%")
@@ -173,15 +177,34 @@ class PanelCalculoRuta(tk.Frame):
 		log(f"   Vecinos disponibles desde {estrella_origen}: {list(grafo.get(estrella_origen, {}).keys())}")
 		log("=" * 60)
 
-		def dfs(actual, energia, pasto_rest, visitadas, consumos_ruta):
-			nonlocal mejor_ruta, max_estrellas, mejor_detallados
+		# Guardar información de una muerte potencial en el recorrido elegido
+		mejor_muerte = None  # dict: {desde, hacia, causa, energia_antes, pasto_antes, distancia}
+		saltos_mortales = []  # Lista de saltos que causarían muerte
+
+		def dfs(actual, energia, pasto_rest, visitadas, consumos_ruta, muerte=None):
+			nonlocal mejor_ruta, max_estrellas, mejor_detallados, mejor_muerte, saltos_mortales
 			if energia <= 0 or pasto_rest <= 0:
+				# Llegó sin recursos al comienzo del nodo (muerte por agotamiento)
+				if len(visitadas) >= max_estrellas:
+					mejor_ruta = visitadas.copy()
+					mejor_detallados = consumos_ruta.copy()
+					max_estrellas = len(visitadas)
+					mejor_muerte = muerte or {
+						"desde": actual,
+						"hacia": None,
+						"causa": "energia" if energia <= 0 else "pasto",
+						"energia_antes": max(0.0, energia),
+						"pasto_antes": max(0.0, pasto_rest),
+						"distancia": 0.0
+					}
 				return
-			if len(visitadas) > max_estrellas:
+			# Actualizar mejor ruta (preferir la que conduce a muerte en caso de empate de estrellas)
+			if len(visitadas) > max_estrellas or (len(visitadas) == max_estrellas and (muerte is not None and mejor_muerte is None)):
 				max_estrellas = len(visitadas)
 				mejor_ruta = visitadas.copy()
 				mejor_detallados = consumos_ruta.copy()
-				log(f"✨ ¡NUEVA MEJOR RUTA! {max_estrellas} estrellas")
+				mejor_muerte = muerte
+				log(f"✨ ¡NUEVA MEJOR RUTA! {max_estrellas} estrellas" + (" (con muerte)" if muerte else ""))
 			log(f"📍 En {actual} | E={energia:.1f}% P={pasto_rest:.1f}kg | Visitadas={len(visitadas)}")
 			for destino, distancia in grafo.get(actual, {}).items():
 				if destino in visitadas:
@@ -194,7 +217,21 @@ class PanelCalculoRuta(tk.Frame):
 				log(f"   Consumo: E={consumo_e:.1f}% P={consumo_p:.1f}kg")
 				log(f"   Resultado: E={nueva_e:.1f}% P={nuevo_p:.1f}kg")
 				if nueva_e <= 0 or nuevo_p <= 0:
-					log("  ❌ Recursos insuficientes, no se puede visitar")
+					# Registrar muerte al intentar este salto; no se visita el destino
+					causa = "energia" if nueva_e <= 0 and (nuevo_p > 0 or nueva_e <= nuevo_p) else "pasto"
+					info_muerte = {
+						"desde": actual,
+						"hacia": destino,
+						"causa": causa,
+						"energia_antes": energia,
+						"pasto_antes": pasto_rest,
+						"distancia": distancia,
+						"ruta_previa": visitadas.copy(),
+						"consumos_previos": consumos_ruta.copy()
+					}
+					log("  ☠️  Muerte si intenta este salto")
+					# Guardar como salto mortal candidato (NO marcar mejor_muerte automáticamente)
+					saltos_mortales.append(info_muerte)
 					continue
 				log("✅ Suficientes recursos, explorando...")
 				next_step = {
@@ -206,11 +243,30 @@ class PanelCalculoRuta(tk.Frame):
 					"energia_restante": nueva_e,
 					"pasto_restante": nuevo_p
 				}
-				dfs(destino, nueva_e, nuevo_p, visitadas + [destino], consumos_ruta + [next_step])
+				dfs(destino, nueva_e, nuevo_p, visitadas + [destino], consumos_ruta + [next_step], muerte)
 
 		dfs(estrella_origen, burroenergia, pasto, [estrella_origen], [])
 		log("=" * 60)
 		log("✅ BÚSQUEDA COMPLETADA")
+
+		# Si hay saltos mortales posibles, preguntar si quiere arriesgarse
+		if saltos_mortales:
+			# Seleccionar el salto mortal más prometedor (el de la ruta más larga)
+			salto_candidato = max(saltos_mortales, key=lambda x: len(x.get('ruta_previa', [])))
+			
+			# Crear diálogo personalizado más bonito
+			respuesta = self._dialogo_salto_mortal(salto_candidato)
+			
+			if respuesta:
+				# Usuario acepta el riesgo: marcar muerte
+				mejor_muerte = salto_candidato
+				mejor_ruta = salto_candidato['ruta_previa']
+				mejor_detallados = salto_candidato['consumos_previos']
+				log("⚠️ USUARIO ACEPTÓ SALTO MORTAL - El burro morirá")
+			else:
+				# Usuario rechaza: mantener ruta segura y generar reporte sin muerte
+				log("⛔ Usuario rechazó salto mortal - Ruta segura confirmada")
+				log(f"   El burro visitó {len(mejor_ruta)} estrellas sin arriesgarse")
 
 		distancia_total = sum(c['distancia'] for c in mejor_detallados)
 		energia_consumida_total = sum(c['consumo_energia'] for c in mejor_detallados)
@@ -222,12 +278,16 @@ class PanelCalculoRuta(tk.Frame):
 		severidad = {"MUERTO": 5, "MORIBUNDO": 4, "MALO": 3, "BUENO": 2, "EXCELENTE": 1}
 		ini = salud_inicial.upper()
 		fin = estado_por_energia
-		estado_final = fin if severidad.get(fin, 3) >= severidad.get(ini, 3) else ini
+		# Si hubo muerte en el último intento, forzar MUERTO
+		murio = mejor_muerte is not None
+		estado_final = "MUERTO" if murio else (fin if severidad.get(fin, 3) >= severidad.get(ini, 3) else ini)
 
 		log(f"   Mejor ruta encontrada: {mejor_ruta}")
 		log(f"   Total de estrellas: {len(mejor_ruta)}")
 		log(f"   Energía final: {max(0, energia_final):.1f}% | Pasto final: {max(0, pasto_final):.1f}kg")
 		log(f"   Estado final: {estado_final}")
+		if murio:
+			log(f"   Murió al intentar ir de {mejor_muerte['desde']} a {mejor_muerte['hacia']} por falta de {mejor_muerte['causa']}")
 
 		# Datos de galaxias visitadas usando el data_provider
 		galaxias = []
@@ -255,7 +315,9 @@ class PanelCalculoRuta(tk.Frame):
 			"pasto_consumido_total": pasto_consumido_total,
 			"consumos_detallados": mejor_detallados,
 			"salud_inicial": ini,
-			"galaxias": galaxias
+			"galaxias": galaxias,
+			"murio": murio,
+			"muerte_info": mejor_muerte
 		}
 		return resultado, "\n".join(log_lines)
 
@@ -265,6 +327,9 @@ class PanelCalculoRuta(tk.Frame):
 		self._imprimir("RUTA MÁXIMA", "titulo")
 		self._imprimir(f"Salud inicial: {r['salud_inicial']}", "item")
 		self._imprimir(f"Estado final: {r['estado_final']}", "resaltado" if r['estado_final'] != r['salud_inicial'] else "item")
+		if r.get('murio') and r.get('muerte_info'):
+			mi = r['muerte_info']
+			self._imprimir(f"Murió al intentar ir de {mi['desde']} a {mi['hacia']} por falta de {mi['causa']}", "critico")
 		self._imprimir(f"Estrellas visitadas: {r['estrellas_visitadas']}", "item")
 		self._imprimir(f"Distancia total: {r['distancia_total']:.1f}", "item")
 		self._imprimir(f"Energía consumida: {r['energia_consumida_total']:.1f} / restante {r['energia_final']:.1f}", "item")
@@ -346,12 +411,141 @@ class PanelCalculoRuta(tk.Frame):
 			gal = gal_by_label.get(dst, "")
 			tree.insert("", "end", values=(f"{i:02d}", dst, gal, dist, ener, past, f"{tiempo:.2f}"))
 		# totales
-		footer = ttk.Label(win, text=(
+		texto_footer = (
 			f"Estrellas: {r['estrellas_visitadas']} | Galaxias: {len(r.get('galaxias', []))} | "
 			f"Distancia total: {r['distancia_total']:.1f} | Energía usada: {r['energia_consumida_total']:.1f} | "
 			f"Pasto usado: {r['pasto_consumido_total']:.2f} | Investigación: {invest_total:.2f}"
-		))
+		)
+		if r.get('murio') and r.get('muerte_info'):
+			mi = r['muerte_info']
+			texto_footer += f" | ☠️ Muerte: {mi['desde']} → {mi['hacia']} por {mi['causa']}"
+		footer = ttk.Label(win, text=texto_footer)
 		footer.pack(fill="x", padx=8, pady=(0,8))
+
+	def _reproducir_audio_muerte(self):
+		"""Reproduce un audio cuando el burro muere. Coloca tu archivo en assets/sounds/burro_muerte.wav
+
+		En Windows se usa winsound. En otros sistemas intenta con simpleaudio si estuviera instalado.
+		"""
+		import os, sys
+		ruta = os.path.join(os.path.dirname(sys.modules.get(__name__).__file__), "..", "..", "assets", "sounds", "burro.wav")
+		try:
+			if os.path.exists(ruta):
+				try:
+					import winsound
+					winsound.PlaySound(ruta, winsound.SND_FILENAME | winsound.SND_ASYNC)
+					return
+				except Exception:
+					pass
+		except Exception:
+			pass
+		# Si no se pudo reproducir, registrar en el log del panel
+		self._imprimir("[Audio muerte no disponible]", "critico")
+
+	def _dialogo_salto_mortal(self, salto):
+		"""Muestra un diálogo personalizado bonito para preguntar si arriesgarse al salto mortal (layout con grid)"""
+		dialogo = tk.Toplevel(self)
+		dialogo.title("⚠️ Decisión Crítica")
+		dialogo.configure(bg="#1a1a2e")
+		dialogo.minsize(520, 420)
+		dialogo.geometry("520x420")
+		dialogo.resizable(False, False)
+
+		# Modal y topmost breve
+		dialogo.transient(self)
+		dialogo.grab_set()
+		dialogo.lift()
+		dialogo.attributes('-topmost', True)
+		dialogo.after(250, lambda: dialogo.attributes('-topmost', False))
+
+		# Centrar
+		dialogo.update_idletasks()
+		sx = (dialogo.winfo_screenwidth() // 2) - (520 // 2)
+		sy = (dialogo.winfo_screenheight() // 2) - (420 // 2)
+		dialogo.geometry(f"520x420+{sx}+{sy}")
+
+		# Grid config
+		dialogo.grid_columnconfigure(0, weight=1)
+		for r in (0,1,2,3,4,5):
+			dialogo.grid_rowconfigure(r, weight=0)
+		dialogo.grid_rowconfigure(3, weight=1)  # espaciador para empujar botones abajo
+
+		# Título y subtítulo
+		lbl_titulo = tk.Label(dialogo, text="⚠️ SALTO MORTAL DETECTADO ⚠️",
+							 font=("Segoe UI", 16, "bold"), fg="#ff6b6b", bg="#1a1a2e")
+		lbl_titulo.grid(row=0, column=0, padx=20, pady=(18, 6), sticky="nwe")
+
+		lbl_sub = tk.Label(dialogo, text="El burro puede intentar un último salto arriesgado...",
+						  font=("Segoe UI", 10), fg="#c7f8ff", bg="#1a1a2e")
+		lbl_sub.grid(row=1, column=0, padx=20, pady=(0, 10), sticky="we")
+
+		# Panel info
+		frm_info = tk.Frame(dialogo, bg="#16213e", relief="ridge", bd=2)
+		frm_info.grid(row=2, column=0, padx=20, pady=(0, 10), sticky="we")
+
+		info_items = [
+			("Desde:", salto['desde'], "#7ad1ff"),
+			("Hacia:", salto['hacia'], "#7ad1ff"),
+			("Distancia:", f"{salto['distancia']:.1f}", "#ffd86b"),
+			("Causa de muerte:", f"Falta de {salto['causa']}", "#ff6b6b"),
+			("Energía antes:", f"{salto['energia_antes']:.1f}%", "#6bff95"),
+			("Pasto antes:", f"{salto['pasto_antes']:.1f} kg", "#6bff95")
+		]
+		for idx, (label, valor, color) in enumerate(info_items):
+			row = tk.Frame(frm_info, bg="#16213e")
+			row.pack(fill="x", padx=12, pady=4)
+			tk_lbl = tk.Label(row, text=label, font=("Consolas", 10, "bold"), fg="#eaeaea", bg="#16213e", width=18, anchor="w")
+			tk_val = tk.Label(row, text=valor, font=("Consolas", 10), fg=color, bg="#16213e", anchor="w")
+			tk_lbl.pack(side="left")
+			tk_val.pack(side="left", fill="x", expand=True)
+
+		# Espaciador para empujar botones
+		sp = tk.Frame(dialogo, bg="#1a1a2e")
+		sp.grid(row=3, column=0, sticky="nswe")
+
+		# Pregunta
+		lbl_preg = tk.Label(dialogo, text="¿Desea que el burro lo intente de todas formas?",
+						  font=("Segoe UI", 11, "bold"), fg="#ffffff", bg="#1a1a2e")
+		lbl_preg.grid(row=4, column=0, padx=20, pady=(6, 8), sticky="we")
+
+		# Respuesta mutable
+		respuesta = [False]
+		def aceptar():
+			respuesta[0] = True
+			dialogo.destroy()
+		def rechazar():
+			respuesta[0] = False
+			dialogo.destroy()
+
+		# Botonera
+		frm_btns = tk.Frame(dialogo, bg="#1a1a2e")
+		frm_btns.grid(row=5, column=0, padx=20, pady=(2, 16), sticky="swe")
+		frm_btns.grid_columnconfigure(0, weight=1)
+		frm_btns.grid_columnconfigure(1, weight=1)
+
+		btn_si = tk.Button(frm_btns, text="SÍ, ARRIESGARSE", font=("Segoe UI", 12, "bold"),
+						  bg="#ff6b6b", fg="#ffffff", activebackground="#ff5252",
+						  activeforeground="#ffffff", relief="solid", bd=2,
+						  height=2, command=aceptar)
+		btn_no = tk.Button(frm_btns, text="NO, RUTA SEGURA", font=("Segoe UI", 12, "bold"),
+						  bg="#6bff95", fg="#1a1a2e", activebackground="#5eeb87",
+						  activeforeground="#1a1a2e", relief="solid", bd=2,
+						  height=2, command=rechazar)
+		btn_si.grid(row=0, column=0, padx=(0, 8), sticky="we")
+		btn_no.grid(row=0, column=1, padx=(8, 0), sticky="we")
+
+		# Fade-in
+		dialogo.attributes("-alpha", 0.0)
+		def fade(alpha=0.0):
+			if alpha < 1.0:
+				alpha += 0.1
+				dialogo.attributes("-alpha", alpha)
+				dialogo.after(18, lambda: fade(alpha))
+		dialogo.after(10, fade)
+
+		# Esperar
+		dialogo.wait_window()
+		return respuesta[0]
 
 	def _imprimir(self, texto, tag=None):
 		self.txt_reporte.insert(tk.END, texto + "\n", tag)
