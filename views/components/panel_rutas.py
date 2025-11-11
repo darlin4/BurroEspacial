@@ -1,18 +1,5 @@
 import json
 import os
-from typing import Dict
-
-# optional optimizer import
-try:
-    from utils.algorithms.pathfinding import propose_route
-except Exception:
-    propose_route = None
-
-# optional helpers (may be None if not available)
-try:
-    from utils import SoundHelper
-except Exception:
-    SoundHelper = None
 
 # === UI (Tkinter) ===
 import tkinter as tk
@@ -69,25 +56,11 @@ def ruta_maxima(estrella_origen, salud_inicial, edad, burroenergia, pasto_bodega
     """Calcula la ruta más larga posible antes de que el burro muera."""
     mejor_ruta = []
     max_estrellas = 0
-    
-    # Factores de consumo según salud (más realistas)
-    factores_salud = {
-        "excelente": 0.5,  # Consume menos energía
-        "buena": 0.7,
-        "mala": 1.0,
-        "moribundo": 1.5,
-        "muerto": 999.0
-    }
-    
-    factor_consumo = factores_salud.get(salud_inicial.lower(), 1.0)
 
-    def dfs(actual, energia, pasto, tiempo_vida, visitadas, pasos_detalle):
+    def dfs(actual, energia, pasto, visitadas):
         nonlocal mejor_ruta, max_estrellas
-        
-        # Condiciones de muerte
-        if energia <= 0 or pasto <= 0 or tiempo_vida <= 0:
+        if energia <= 0 or pasto <= 0:
             return
-            
         if len(visitadas) > max_estrellas:
             mejor_ruta = visitadas.copy()
             max_estrellas = len(visitadas)
@@ -95,48 +68,16 @@ def ruta_maxima(estrella_origen, salud_inicial, edad, burroenergia, pasto_bodega
         for destino, distancia in grafo.get(actual, {}).items():
             if destino in visitadas:
                 continue
-            
-            # Cálculos de consumo más realistas
-            # Consumo de energía: distancia * factor de salud (0.5-1.5% por unidad)
-            consumo_energia = distancia * factor_consumo * 0.5
-            
-            # Consumo de pasto: aproximadamente 0.05 kg por unidad de distancia
-            consumo_pasto = distancia * 0.05
-            
-            # Tiempo de vida: se reduce por la distancia viajada
-            consumo_tiempo = distancia
-            
-            # Calcular nuevos valores
+            consumo_energia = distancia * 1.2
+            consumo_pasto = distancia * 0.7
             nueva_energia = energia - consumo_energia
             nuevo_pasto = pasto - consumo_pasto
-            nuevo_tiempo = tiempo_vida - consumo_tiempo
-            
-            # Si necesita pasto y tiene disponible, comer automáticamente
-            if nueva_energia < 50 and nuevo_pasto > 0:
-                # Comer hasta recuperar energía (máximo disponible)
-                pasto_a_comer = min(nuevo_pasto, (50 - nueva_energia) / 5)  # 1kg = 5% energía
-                nueva_energia += pasto_a_comer * 5
-                nuevo_pasto -= pasto_a_comer
-            
-            # Verificar si puede continuar
-            if nueva_energia > 0 and nuevo_pasto > 0 and nuevo_tiempo > 0:
-                nuevo_detalle = pasos_detalle + [{
-                    'destino': destino,
-                    'distancia': distancia,
-                    'energia_consumida': consumo_energia,
-                    'pasto_consumido': consumo_pasto,
-                    'energia_restante': nueva_energia,
-                    'pasto_restante': nuevo_pasto
-                }]
-                dfs(destino, nueva_energia, nuevo_pasto, nuevo_tiempo, 
-                    visitadas + [destino], nuevo_detalle)
+            if nueva_energia > 0 and nuevo_pasto > 0:
+                dfs(destino, nueva_energia, nuevo_pasto, visitadas + [destino])
 
-    # Tiempo de vida inicial basado en la edad (más joven = más tiempo)
-    tiempo_vida_inicial = max(100, 500 - (edad * 10))
-    
-    dfs(estrella_origen, burroenergia, pasto_bodega, tiempo_vida_inicial, [estrella_origen], [])
+    dfs(estrella_origen, burroenergia, pasto_bodega, [estrella_origen])
 
-    estado_final = estado_salud_por_energia(burroenergia - (max_estrellas * 10))
+    estado_final = estado_salud_por_energia(burroenergia - (100 - burroenergia))
     return {
         "ruta": mejor_ruta,
         "estrellas_visitadas": max_estrellas,
@@ -159,13 +100,11 @@ class PanelRutas(tk.Frame):
     cargar_grafo_desde_json y ruta_maxima.
     """
 
-    def __init__(self, parent, mapa=None, **kwargs):
+    def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
         self.configure(bg="#0b0c10")
 
         self.grafo = {}
-        # optional map widget reference to draw routes
-        self.mapa = mapa
 
         self._build_ui()
 
@@ -191,69 +130,6 @@ class PanelRutas(tk.Frame):
                 fg="#ff4444"
             )
             messagebox.showerror("Error", f"No se pudo cargar el grafo:\n{e}")
-
-        # Validate hypergiant counts per galaxy (max 2 per galaxy requirement)
-        try:
-            with open(ruta_json, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            counts = {}
-            for c in data.get('constellations', []):
-                for s in c.get('starts', []):
-                    if s.get('hypergiant'):
-                        g = s.get('galaxy', None)
-                        counts[g] = counts.get(g, 0) + 1
-            violations = [g for g, cnt in counts.items() if cnt > 2]
-            if violations:
-                messagebox.showwarning('Advertencia', f"Se detectaron más de 2 hipergigantes en las galaxias: {violations}. Esto excede la restricción (max 2 por galaxia). El optimizador seguirá funcionando, pero revise el JSON.")
-        except Exception:
-            pass
-
-    def set_grafo_from_data(self, data: dict):
-        """Carga el grafo desde un diccionario ya parseado (en memoria).
-
-        Esto se usa cuando el usuario edita parámetros en memoria (ResearchEditor)
-        y no quiere sobrescribir/guardar todavía el JSON en disco.
-        """
-        try:
-            # construir grafo en el mismo formato que cargar_grafo_desde_json
-            grafo = {}
-            for const in data.get("constellations", []):
-                for star in const.get("starts", []):
-                    nombre = star.get("label")
-                    if not nombre:
-                        continue
-                    grafo.setdefault(nombre, {})
-                    for enlace in star.get("linkedTo", []):
-                        if enlace.get("blocked", False):
-                            continue
-                        destino_id = enlace.get("starId")
-                        distancia = enlace.get("distance")
-                        # buscar label destino
-                        destino_nombre = None
-                        for c2 in data.get("constellations", []):
-                            for s2 in c2.get("starts", []):
-                                if s2.get("id") == destino_id:
-                                    destino_nombre = s2.get("label")
-                                    break
-                            if destino_nombre:
-                                break
-                        if destino_nombre:
-                            grafo[nombre][destino_nombre] = distancia
-
-            self.grafo = grafo
-            self._update_origenes()
-            # update status label if present
-            try:
-                num_estrellas = len(self.grafo)
-                num_conexiones = sum(len(vecinos) for vecinos in self.grafo.values())
-                self.label_status.config(
-                    text=f"✅ Grafo cargado (memoria): {num_estrellas} estrellas, {num_conexiones} conexiones",
-                    fg="#44ff44"
-                )
-            except Exception:
-                pass
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo cargar el grafo desde datos en memoria:\n{e}")
 
     # --- Construcción de UI ---
     def _build_ui(self):
@@ -304,10 +180,6 @@ class PanelRutas(tk.Frame):
 
         self.btn_calc = ttk.Button(actions, text="Calcular Ruta", command=self._on_calcular)
         self.btn_calc.pack(side="left", padx=6)
-
-        # Optimized route (minimizar gasto)
-        self.btn_calc_opt = ttk.Button(actions, text="Calcular Ruta (optimizada)", command=self._on_calcular_optimizada)
-        self.btn_calc_opt.pack(side="left", padx=6)
         
         # Label de estado
         self.label_status = tk.Label(
@@ -423,335 +295,4 @@ class PanelRutas(tk.Frame):
             self.txt.insert(tk.END, "  • Estrella origen aislada\n")
         
         self.txt.insert(tk.END, "\n" + "═" * 80 + "\n")
-
-    def _build_label_for_opt(self, res: Dict):
-        lines = []
-        lines.append("═" * 80)
-        lines.append("  RUTA CALCULADA - MÁXIMAS ESTRELLAS (OPTIMIZADA)")
-        lines.append("═" * 80)
-        lines.append("")
-        lines.append("📋 CONDICIONES INICIALES:")
-        lines.append(f"  • Estrella Origen: {self.combo_origen.get()}")
-        lines.append(f"  • Burroenergía inicial: {res.get('energia_inicial', '')}")
-        lines.append(f"  • Pasto inicial: {res.get('pasto_inicial', '')}")
-        lines.append("")
-        lines.append("🎯 RESULTADOS:")
-        lines.append(f"  • Estrellas Visitadas: {res.get('estrellas_visitadas', 0)}")
-        if res.get('ruta'):
-            lines.append(f"  • Ruta: {' -> '.join(res.get('ruta'))}")
-            lines.append(f"  • Energia final (estimada): {res.get('energia_final', '')}")
-            lines.append(f"  • Pasto final (estimado): {res.get('pasto_final', '')}")
-            lines.append(f"  • Tiempo de vida final: {res.get('tiempo_vida_final', '')}")
-            # pasos detallados si están disponibles
-            pasos = res.get('pasos', [])
-            if pasos:
-                lines.append("")
-                lines.append("🔎 DETALLE DE PASOS:")
-                for i, p in enumerate(pasos, start=1):
-                    desde = p.get('desde')
-                    hacia = p.get('hacia')
-                    dist = p.get('distancia')
-                    vida = p.get('tiempo_vida_restante')
-                    eaten = p.get('eaten_kg', 0)
-                    jump = p.get('jump_to')
-                    if jump:
-                        lines.append(f"  {i}. {desde} -> {hacia} (dist {dist}) -> JUMP to {jump} | Vida restante: {vida:.1f} | Pasto comido: {eaten}")
-                    else:
-                        lines.append(f"  {i}. {desde} -> {hacia} (dist {dist}) | Vida restante: {vida:.1f} | Pasto comido: {eaten}")
-        else:
-            lines.append("  • No se encontró ruta viable")
-        lines.append("")
-        lines.append("" + "═" * 80)
-        return "\n".join(lines)
-
-    def _ask_select_destination(self, hyper_label: str, candidates: list) -> str:
-        """Muestra un diálogo modal para seleccionar el destino en la siguiente galaxia.
-
-        Devuelve la label seleccionada o None si se cancela.
-        """
-        dlg = tk.Toplevel(self)
-        dlg.title(f"Destino para salto desde {hyper_label}")
-        dlg.geometry("360x300")
-        dlg.transient(self)
-        dlg.grab_set()
-
-        tk.Label(dlg, text=f"Elige destino en la siguiente galaxia para {hyper_label}:", wraplength=340).pack(pady=8)
-        listbox = tk.Listbox(dlg, selectmode='browse')
-        for it in candidates:
-            listbox.insert('end', it)
-        listbox.pack(fill='both', expand=True, padx=8, pady=8)
-
-        sel = {'choice': None}
-
-        def on_ok():
-            sel_idx = listbox.curselection()
-            if sel_idx:
-                sel['choice'] = listbox.get(sel_idx[0])
-            dlg.destroy()
-
-        def on_cancel():
-            dlg.destroy()
-
-        btnf = tk.Frame(dlg)
-        btnf.pack(fill='x', padx=8, pady=6)
-        ttk.Button(btnf, text='OK', command=on_ok).pack(side='left', expand=True, fill='x')
-        ttk.Button(btnf, text='Cancelar', command=on_cancel).pack(side='left', expand=True, fill='x')
-
-        self.wait_window(dlg)
-        return sel['choice']
-
-    def _on_calcular_optimizada(self):
-        if not self.grafo:
-            messagebox.showwarning("Atención", "Carga primero un JSON de constelaciones")
-            return
-
-        origen = self.combo_origen.get()
-        if not origen:
-            messagebox.showwarning("Atención", "Selecciona la estrella de origen")
-            return
-
-        try:
-            salud = self.combo_salud.get()
-            edad = float(self.entry_edad.get())
-            energia = float(self.entry_energia.get())
-            pasto = float(self.entry_pasto.get())
-        except ValueError:
-            messagebox.showerror("Error", "Verifica que edad, energía y pasto sean números válidos")
-            return
-
-        if propose_route is None:
-            messagebox.showerror("Error", "El optimizador no está disponible (módulo faltante o error)")
-            return
-
-        # Build grafo compatible (labels)
-        grafo = self.grafo
-
-        # load original JSON data from the map if possible (we rely on constelaciones.json file)
-        data = None
-        try:
-            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-            cand = os.path.join(repo_root, 'constelaciones.json')
-            if os.path.exists(cand):
-                with open(cand, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-        except Exception:
-            data = None
-
-        if data is None:
-            messagebox.showwarning('Aviso', 'No se pudo cargar constelaciones.json; se utilizarán valores por defecto')
-            data = {'constellations': []}
-
-        burro_init = {'salud': salud, 'edad': edad, 'energia': energia, 'pasto': pasto}
-
-        res = propose_route(grafo, data, origen, burro_init, time_limit_seconds=3.0)
-
-        # Simulación paso-a-paso para permitir pausa en hipergigantes
-        pasos = res.get('pasos', [])
-        ruta_actual = [origen]
-        merged_final_route = None
-        merged_final_res = None
-
-        # limpiar y mostrar cabecera básica
-        self.txt.delete('1.0', tk.END)
-        self.txt.insert(tk.END, "══" + "═" * 78 + "\n")
-        self.txt.insert(tk.END, "  Simulación paso a paso (pausa en hipergigantes)\n")
-        self.txt.insert(tk.END, "══" + "═" * 78 + "\n\n")
-
-        processed_hyper = False
-        died_during_sim = False
-        for idx, paso in enumerate(pasos, start=1):
-            destino = paso.get('hacia')
-            desde = paso.get('desde')
-            vida = paso.get('tiempo_vida_restante')
-            energia_despues = paso.get('energia_despues')
-            pasto_rest = paso.get('pasto_restante')
-            eaten = paso.get('eaten_kg', 0)
-            estado_salud = paso.get('estado_salud', salud)
-
-            ruta_actual.append(destino)
-
-            # Mostrar el paso en el log
-            if paso.get('jump_to'):
-                line = f"{idx}. {desde} -> {destino} (dist {paso.get('distancia')}) -> JUMP to {paso.get('jump_to')} | Vida: {vida:.1f} | Pasto comido: {eaten}\n"
-            else:
-                line = f"{idx}. {desde} -> {destino} (dist {paso.get('distancia')}) | Vida: {vida:.1f} | Pasto comido: {eaten}\n"
-            self.txt.insert(tk.END, line)
-            self.txt.see(tk.END)
-
-            # Si en este paso la vida se agotó, detener simulación inmediatamente
-            try:
-                if vida is not None and float(vida) <= 0:
-                    died_during_sim = True
-                    self.txt.insert(tk.END, f"\n⚰️  El burro ha muerto al llegar a {destino}. Simulación detenida.\n")
-                    # intentar reproducir sonido de muerte ahora
-                    try:
-                        from pathlib import Path
-                        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                        candidates = [
-                            os.path.join(repo_root, 'assets', 'muerto.wav'),
-                            os.path.join(repo_root, 'assets', 'burrocantando2.wav')
-                        ]
-                        played = False
-                        for c in candidates:
-                            if Path(c).exists():
-                                try:
-                                    if SoundHelper is not None:
-                                        SoundHelper.play_sound(c)
-                                        played = True
-                                        break
-                                except Exception:
-                                    played = False
-                        if not played:
-                            self.txt.insert(tk.END, "⚰️  (No se pudo reproducir sonido de muerte)\n")
-                    except Exception:
-                        pass
-                    break
-            except Exception:
-                pass
-
-            # dibujar ruta parcial en el mapa
-            try:
-                if hasattr(self, 'mapa') and self.mapa is not None and hasattr(self.mapa, 'draw_route'):
-                    try:
-                        self.mapa.clear_route()
-                        self.mapa.draw_route(ruta_actual)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            # Si es hipergigante, pausar y pedir destino
-            if paso.get('hypergiant') and not processed_hyper:
-                processed_hyper = True
-                hyper_label = destino
-
-                # encontrar metadatos de la estrella hyper
-                star_meta = None
-                for c in data.get('constellations', []):
-                    for s in c.get('starts', []):
-                        if s.get('label') == hyper_label:
-                            star_meta = s
-                            break
-                    if star_meta:
-                        break
-
-                candidates = []
-                if star_meta:
-                    try:
-                        origin_gal = int(star_meta.get('galaxy', -1))
-                    except Exception:
-                        origin_gal = -1
-                    target_gal = origin_gal + 1
-                    for c in data.get('constellations', []):
-                        for s in c.get('starts', []):
-                            try:
-                                if int(s.get('galaxy', -1)) == target_gal:
-                                    candidates.append(s.get('label'))
-                            except Exception:
-                                continue
-
-                if not candidates:
-                    self.txt.insert(tk.END, f"⚠️  No hay candidatos para salto desde {hyper_label} hacia la galaxia {origin_gal + 1}\n")
-                    break
-
-                choice = self._ask_select_destination(hyper_label, candidates)
-                if not choice:
-                    self.txt.insert(tk.END, "⏸️  Selección cancelada por el científico. Simulación detenida.\n")
-                    break
-
-                # Re-ejecutar optimizador desde la elección con el estado actual del burro
-                burro_after = {'salud': estado_salud, 'edad': edad, 'energia': energia_despues, 'pasto': pasto_rest, 'tiempo_vida': vida}
-                forced = {hyper_label: choice}
-                self.txt.insert(tk.END, f"🔁  Recalculando ruta desde {choice} usando el estado actual del burro...\n")
-                self.txt.see(tk.END)
-
-                res2 = propose_route(grafo, data, choice, burro_after, time_limit_seconds=3.0, forced_jumps=forced)
-
-                # Merge routes: ruta_actual contains hasta el hyper (incluye destino hyper), añadir choice y resto
-                merged_final_route = ruta_actual + [choice] + res2.get('ruta', [])[1:]
-                merged_final_res = res2
-                break
-
-        # Si hubo un cálculo posterior a la pausa, mostrar sus resultados combinados
-        if merged_final_res is not None:
-            texto2 = self._build_label_for_opt({
-                'ruta': merged_final_route,
-                'estrellas_visitadas': merged_final_res.get('estrellas_visitadas', 0) + len(ruta_actual) - 1,
-                'energia_final': merged_final_res.get('energia_final'),
-                'pasto_final': merged_final_res.get('pasto_final'),
-                'tiempo_vida_final': merged_final_res.get('tiempo_vida_final'),
-                'energia_inicial': energia,
-                'pasto_inicial': pasto,
-                'pasos': merged_final_res.get('pasos', [])
-            })
-            self.txt.insert(tk.END, "\n" + texto2)
-            try:
-                if hasattr(self, 'mapa') and self.mapa is not None:
-                    try:
-                        self.mapa.clear_route()
-                        if hasattr(self.mapa, 'animate_route'):
-                            self.mapa.animate_route(merged_final_route, step_delay_ms=450)
-                        else:
-                            self.mapa.draw_route(merged_final_route)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        else:
-            # no hubo pausa/hyper o no se eligió destino: mostrar el resultado original
-            texto = self._build_label_for_opt({
-                'ruta': res.get('ruta'),
-                'estrellas_visitadas': res.get('estrellas_visitadas'),
-                'energia_final': res.get('energia_final'),
-                'pasto_final': res.get('pasto_final'),
-                'tiempo_vida_final': res.get('tiempo_vida_final'),
-                'energia_inicial': energia,
-                'pasto_inicial': pasto,
-                'pasos': res.get('pasos', [])
-            })
-            self.txt.insert(tk.END, "\n" + texto)
-
-        # Draw route on map if available
-        try:
-            if hasattr(self, 'mapa') and self.mapa is not None:
-                ruta = res.get('ruta', [])
-                if ruta:
-                    try:
-                        self.mapa.clear_route()
-                        if hasattr(self.mapa, 'animate_route'):
-                            self.mapa.animate_route(ruta, step_delay_ms=450)
-                        else:
-                            self.mapa.draw_route(ruta)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        # If burro died during the simulation, attempt to play a death sound
-        try:
-            tiempo_final = res.get('tiempo_vida_final', None)
-            if tiempo_final is not None and float(tiempo_final) <= 0:
-                # try a few candidate sound files in assets
-                from pathlib import Path
-                repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                candidates = [
-                    os.path.join(repo_root, 'assets', 'muerto.wav'),
-                    os.path.join(repo_root, 'assets', 'burrocantando2.wav'),
-                    os.path.join(repo_root, 'assets', 'mala.jpg')
-                ]
-                played = False
-                for c in candidates:
-                    if Path(c).exists():
-                        try:
-                            if SoundHelper is not None:
-                                SoundHelper.play_sound(c)
-                                played = True
-                                break
-                        except Exception:
-                            played = False
-                if not played:
-                    # fallback: insert a warning in the text area
-                    self.txt.insert(tk.END, "\n⚰️  Atención: el burro ha muerto durante la ruta (no se pudo reproducir sonido).\n")
-        except Exception:
-            pass
 

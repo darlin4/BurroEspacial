@@ -1,329 +1,251 @@
-"""
-Panel de control para gestionar bloqueo/habilitación de caminos entre estrellas.
-Debido a cometas y meteoritos, los caminos pueden ser bloqueados/habilitados en cualquier momento.
-"""
-
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
-import json
-from typing import Dict, List, Callable, Optional
+from tkinter import ttk, messagebox
 
 
 class PanelControlCaminos(tk.Frame):
-    """
-    Panel para bloquear/habilitar caminos entre estrellas.
-    Permite a los científicos gestionar la seguridad de las rutas.
-    """
-    
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, **kwargs)
-        self.configure(bg="#0b0c10")
-        
-        # Datos del JSON cargado
-        self.data = None
-        self.json_path = None
-        
-        # Mapeo de items del tree a referencias de caminos
-        self.item_to_camino = {}
-        
-        # Callback para notificar cambios
-        self.on_cambio_callback: Optional[Callable] = None
-        
-        self._build_ui()
-    
-    def _build_ui(self):
-        """Construye la interfaz del panel"""
-        
-        # Título
-        titulo = tk.Label(
-            self,
-            text="🚧 Control de Caminos",
-            bg="#0b0c10",
-            fg="#00eaff",
-            font=("Orbitron", 14, "bold")
-        )
-        titulo.pack(pady=10)
-        
-        # Descripción
-        desc = tk.Label(
-            self,
-            text="Bloquea/habilita caminos entre estrellas\ndebido a cometas y meteoritos",
-            bg="#0b0c10",
-            fg="#888",
-            font=("Arial", 9),
-            justify="center"
-        )
-        desc.pack(pady=5)
-        
-        # Frame de búsqueda y filtros
-        frame_filtros = tk.Frame(self, bg="#0b0c10")
-        frame_filtros.pack(fill="x", padx=10, pady=5)
-        
-        tk.Label(frame_filtros, text="Filtrar por estrella:", bg="#0b0c10", fg="white").pack(side="left", padx=5)
-        self.entry_filtro = tk.Entry(frame_filtros, width=20)
-        self.entry_filtro.pack(side="left", padx=5)
-        self.entry_filtro.bind("<KeyRelease>", lambda e: self._actualizar_lista())
-        
-        btn_limpiar = ttk.Button(frame_filtros, text="Limpiar", command=self._limpiar_filtro)
-        btn_limpiar.pack(side="left", padx=5)
-        
-        # Frame para la lista de caminos
-        frame_lista = tk.LabelFrame(
-            self,
-            text="Caminos Disponibles",
-            bg="#0b0c10",
-            fg="white",
-            font=("Arial", 10, "bold")
-        )
-        frame_lista.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        # Treeview para mostrar caminos
-        columns = ("origen", "destino", "distancia", "estado")
-        self.tree = ttk.Treeview(frame_lista, columns=columns, show="headings", height=15)
-        
-        self.tree.heading("origen", text="Estrella Origen")
-        self.tree.heading("destino", text="Estrella Destino")
-        self.tree.heading("distancia", text="Distancia")
-        self.tree.heading("estado", text="Estado")
-        
-        self.tree.column("origen", width=150)
-        self.tree.column("destino", width=150)
-        self.tree.column("distancia", width=100)
-        self.tree.column("estado", width=100)
-        
-        # Scrollbar
-        scrollbar = ttk.Scrollbar(frame_lista, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        
-        self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Frame de acciones
-        frame_acciones = tk.Frame(self, bg="#0b0c10")
-        frame_acciones.pack(fill="x", padx=10, pady=10)
-        
-        self.btn_bloquear = tk.Button(
-            frame_acciones,
-            text="🚫 Bloquear Camino",
-            command=self._bloquear_seleccionado,
-            bg="#ff4444",
-            fg="white",
-            font=("Arial", 10, "bold"),
-            cursor="hand2",
-            state="disabled"
-        )
-        self.btn_bloquear.pack(side="left", padx=5)
-        
-        self.btn_habilitar = tk.Button(
-            frame_acciones,
-            text="✅ Habilitar Camino",
-            command=self._habilitar_seleccionado,
-            bg="#44ff44",
-            fg="black",
-            font=("Arial", 10, "bold"),
-            cursor="hand2",
-            state="disabled"
-        )
-        self.btn_habilitar.pack(side="left", padx=5)
-        
-        self.btn_guardar = tk.Button(
-            frame_acciones,
-            text="💾 Guardar Cambios",
-            command=self._guardar_cambios,
-            bg="#00eaff",
-            fg="black",
-            font=("Arial", 10, "bold"),
-            cursor="hand2",
-            state="disabled"
-        )
-        self.btn_guardar.pack(side="right", padx=5)
-        
-        # Estadísticas
-        self.label_stats = tk.Label(
-            self,
-            text="Caminos: 0 | Bloqueados: 0 | Habilitados: 0",
-            bg="#0b0c10",
-            fg="#888",
-            font=("Arial", 9)
-        )
-        self.label_stats.pack(pady=5)
-        
-        # Bind para selección
-        self.tree.bind("<<TreeviewSelect>>", self._on_seleccion_cambiada)
-    
-    def cargar_datos(self, json_path: str, data: dict):
-        """
-        Carga los datos del JSON de constelaciones.
-        
-        Args:
-            json_path: Ruta del archivo JSON
-            data: Datos parseados del JSON
-        """
-        self.json_path = json_path
-        self.data = data
-        self._actualizar_lista()
-        self.btn_guardar.config(state="normal")
-    
-    def _actualizar_lista(self):
-        """Actualiza la lista de caminos en el TreeView"""
-        if not self.data:
-            return
-        
-        # Limpiar árbol y mapeo
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        self.item_to_camino = {}
-        
-        # Obtener filtro
-        filtro = self.entry_filtro.get().lower()
-        
-        # Mapear IDs a nombres
-        id_a_nombre = {}
-        for const in self.data.get("constellations", []):
-            for star in const.get("starts", []):
-                id_a_nombre[star["id"]] = star["label"]
-        
-        # Agregar caminos
-        total = 0
-        bloqueados = 0
-        habilitados = 0
-        
-        for const in self.data.get("constellations", []):
-            for star in const.get("starts", []):
-                origen_nombre = star["label"]
-                
-                # Aplicar filtro
-                if filtro and filtro not in origen_nombre.lower():
-                    continue
-                
-                for link in star.get("linkedTo", []):
-                    destino_id = link["starId"]
-                    destino_nombre = id_a_nombre.get(destino_id, f"ID:{destino_id}")
-                    distancia = link["distance"]
-                    bloqueado = link.get("blocked", False)
-                    
-                    estado = "🚫 BLOQUEADO" if bloqueado else "✅ HABILITADO"
-                    
-                    # Agregar al tree
-                    item_id = self.tree.insert(
-                        "",
-                        "end",
-                        values=(origen_nombre, destino_nombre, f"{distancia} ly", estado),
-                        tags=("bloqueado" if bloqueado else "habilitado",)
-                    )
-                    
-                    # Guardar referencia al camino en el diccionario
-                    self.item_to_camino[item_id] = {
-                        'origen_id': star['id'],
-                        'destino_id': destino_id
-                    }
-                    
-                    total += 1
-                    if bloqueado:
-                        bloqueados += 1
-                    else:
-                        habilitados += 1
-        
-        # Aplicar colores
-        self.tree.tag_configure("bloqueado", foreground="#ff4444")
-        self.tree.tag_configure("habilitado", foreground="#44ff44")
-        
-        # Actualizar estadísticas
-        self.label_stats.config(
-            text=f"Caminos: {total} | Bloqueados: {bloqueados} | Habilitados: {habilitados}"
-        )
-    
-    def _limpiar_filtro(self):
-        """Limpia el filtro de búsqueda"""
-        self.entry_filtro.delete(0, tk.END)
-        self._actualizar_lista()
-    
-    def _on_seleccion_cambiada(self, event):
-        """Maneja el cambio de selección en el tree"""
-        seleccion = self.tree.selection()
-        if seleccion:
-            self.btn_bloquear.config(state="normal")
-            self.btn_habilitar.config(state="normal")
-        else:
-            self.btn_bloquear.config(state="disabled")
-            self.btn_habilitar.config(state="disabled")
-    
-    def _bloquear_seleccionado(self):
-        """Bloquea el camino seleccionado"""
-        seleccion = self.tree.selection()
-        if not seleccion:
-            return
-        
-        for item_id in seleccion:
-            self._cambiar_estado_camino(item_id, True)
-        
-        self._actualizar_lista()
-        
-        if self.on_cambio_callback:
-            self.on_cambio_callback()
-    
-    def _habilitar_seleccionado(self):
-        """Habilita el camino seleccionado"""
-        seleccion = self.tree.selection()
-        if not seleccion:
-            return
-        
-        for item_id in seleccion:
-            self._cambiar_estado_camino(item_id, False)
-        
-        self._actualizar_lista()
-        
-        if self.on_cambio_callback:
-            self.on_cambio_callback()
-    
-    def _cambiar_estado_camino(self, item_id: str, bloquear: bool):
-        """
-        Cambia el estado de bloqueo de un camino.
-        
-        Args:
-            item_id: ID del item en el tree
-            bloquear: True para bloquear, False para habilitar
-        """
-        if not self.data:
-            return
-        
-        # Obtener referencia al camino desde el diccionario
-        if item_id not in self.item_to_camino:
-            return
-        
-        camino_ref = self.item_to_camino[item_id]
-        origen_id = camino_ref['origen_id']
-        destino_id = camino_ref['destino_id']
-        
-        # Buscar y modificar el camino en los datos
-        for const in self.data.get("constellations", []):
-            for star in const.get("starts", []):
-                if star["id"] == origen_id:
-                    for link in star.get("linkedTo", []):
-                        if link["starId"] == destino_id:
-                            link["blocked"] = bloquear
-                            return
-    
-    def _guardar_cambios(self):
-        """Guarda los cambios en el archivo JSON"""
-        if not self.data or not self.json_path:
-            messagebox.showwarning("Advertencia", "No hay datos para guardar")
-            return
-        
-        try:
-            # Guardar JSON
-            with open(self.json_path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2, ensure_ascii=False)
-            
-            messagebox.showinfo("Éxito", "Cambios guardados correctamente en:\n" + self.json_path)
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo guardar el archivo:\n{str(e)}")
-    
-    def set_on_cambio_callback(self, callback: Callable):
-        """
-        Establece un callback que se llamará cuando se bloquee/habilite un camino.
-        
-        Args:
-            callback: Función a llamar cuando haya cambios
-        """
-        self.on_cambio_callback = callback
+	"""Panel para listar y bloquear/habilitar caminos entre estrellas.
+
+	Se trabaja directamente sobre la estructura JSON cargada en memoria.
+	Requiere:
+	- get_data: callable que retorne el dict de datos actual (con 'constellations').
+	- on_change: callable que será invocado tras modificar bloqueos (para redibujar mapa, etc.).
+	"""
+
+	def __init__(self, master, get_data, on_change=None):
+		super().__init__(master)
+		self.get_data = get_data
+		self.on_change = on_change
+		self._rows = []  # lista de (star_obj, link_obj, origen, destino, distancia)
+		self._build_ui()
+		self._cargar()
+
+	def _build_ui(self):
+		style = ttk.Style()
+		# Estilos generales
+		style.configure("Heading.TLabel", font=("Segoe UI", 12, "bold"), foreground="#EAEAEA", background="#111")
+		style.configure("Info.TLabel", foreground="#EAEAEA", background="#111")
+		style.configure("Toolbar.TFrame", background="#111")
+		style.configure("Blocked.TLabel", foreground="#FF6B6B", background="#111")
+		style.configure("Free.TLabel", foreground="#6BFF95", background="#111")
+		# Treeview oscuro legible
+		style.configure("Dark.Treeview",
+			background="#121212",
+			fieldbackground="#121212",
+			foreground="#EAEAEA",
+			rowheight=22,
+			bordercolor="#333333",
+			borderwidth=0)
+		style.configure("Dark.Treeview.Heading",
+			background="#1E1E1E",
+			foreground="#EAEAEA",
+			font=("Segoe UI", 10, "bold"))
+		style.map("Dark.Treeview",
+			background=[('selected', '#2E6CBD')],
+			foreground=[('selected', '#FFFFFF')])
+
+		top = ttk.Frame(self, style="Toolbar.TFrame")
+		top.pack(fill="x", padx=8, pady=(8,4))
+		left_box = ttk.Frame(top, style="Toolbar.TFrame")
+		left_box.pack(side="left")
+		ttk.Label(left_box, text="Gestión de Caminos", style="Heading.TLabel").pack(anchor="w")
+		self.stats_label = ttk.Label(left_box, text="Caminos: 0 | Bloqueados: 0 | Libres: 0", style="Info.TLabel")
+		self.stats_label.pack(anchor="w", pady=(2,0))
+
+		right_box = ttk.Frame(top, style="Toolbar.TFrame")
+		right_box.pack(side="right")
+		self.var_filtro = tk.StringVar()
+		ttk.Entry(right_box, textvariable=self.var_filtro, width=24).pack(side="left")
+		ttk.Label(right_box, text="Filtrar:", style="Info.TLabel").pack(side="left", padx=(6,6))
+		self.var_filtro.trace_add('write', lambda *args: self._aplicar_filtro())
+		self.var_solo_bloq = tk.BooleanVar(value=False)
+		chk = ttk.Checkbutton(right_box, text="Solo bloqueados", variable=self.var_solo_bloq, command=self._aplicar_filtro)
+		chk.pack(side="left", padx=(6,6))
+		ttk.Button(right_box, text="Refrescar", command=self._cargar).pack(side="left", padx=(6,0))
+
+		cols = ("origen", "destino", "dist", "estado")
+		self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16, style="Dark.Treeview")
+		self.tree.heading("origen", text="Origen")
+		self.tree.heading("destino", text="Destino")
+		self.tree.heading("dist", text="Distancia")
+		self.tree.heading("estado", text="Estado")
+		self.tree.column("origen", width=160)
+		self.tree.column("destino", width=160)
+		self.tree.column("dist", width=90, anchor="center")
+		self.tree.column("estado", width=100, anchor="center")
+		self.tree.pack(fill="both", expand=True, padx=8, pady=6)
+		self.tree.tag_configure("odd", background="#161616", foreground="#EAEAEA")
+		self.tree.tag_configure("even", background="#121212", foreground="#EAEAEA")
+
+		btns = ttk.Frame(self)
+		btns.pack(fill="x", padx=8, pady=6)
+		ttk.Button(btns, text="Bloquear", command=self._bloquear_sel).pack(side="left")
+		ttk.Button(btns, text="Habilitar", command=self._habilitar_sel).pack(side="left", padx=6)
+		self.lbl_count = ttk.Label(btns, text="0 visibles")
+		self.lbl_count.pack(side="right")
+		self.btn_export = ttk.Button(btns, text="Exportar bloqueos", command=self._exportar_bloqueos)
+		self.btn_export.pack(side="right", padx=(0,8))
+
+		# Detalle y doble clic para alternar
+		self.lbl_info = ttk.Label(self, text="Selecciona una fila o haz doble clic para alternar bloqueo", style="Info.TLabel")
+		self.lbl_info.pack(fill="x", padx=8, pady=(0,8))
+		self.tree.bind("<<TreeviewSelect>>", self._on_select)
+		self.tree.bind("<Double-1>", self._on_double_click)
+
+	def _cargar(self):
+		for i in self.tree.get_children():
+			self.tree.delete(i)
+		self._rows.clear()
+		data = self.get_data() if callable(self.get_data) else None
+		if not data or "constellations" not in data:
+			return
+		consts = data["constellations"]
+		# construir índice ID->label
+		id_to_label = {}
+		for c in consts:
+			for s in c.get("starts", []):
+				id_to_label[s.get("id")] = s.get("label")
+
+		visible = 0
+		bloqueados = 0
+		for c in consts:
+			for s in c.get("starts", []):
+				origen_label = s.get("label")
+				for link in s.get("linkedTo", []):
+					dest_id = link.get("starId")
+					dest_label = id_to_label.get(dest_id, f"id:{dest_id}")
+					dist = link.get("distance", 0)
+					bloqueado = bool(link.get("blocked", False))
+					self._rows.append((s, link, origen_label, dest_label, dist))
+					if bloqueado:
+						bloqueados += 1
+					tag = "odd" if (visible % 2) else "even"
+					estado_txt = "BLOQUEADO" if bloqueado else "LIBRE"
+					self.tree.insert("", "end", values=(origen_label, dest_label, dist, estado_txt), tags=(tag,))
+					visible += 1
+		libres = visible - bloqueados
+		self.lbl_count.config(text=f"{visible} visibles")
+		self.stats_label.config(text=f"Caminos: {visible} | Bloqueados: {bloqueados} | Libres: {libres}")
+
+	def _aplicar_filtro(self):
+		filtro = (self.var_filtro.get() or "").strip().lower()
+		for i in self.tree.get_children():
+			self.tree.delete(i)
+		visible = 0
+		for idx, (_s, link, orig, dest, dist) in enumerate(self._rows):
+			bloq = link.get('blocked', False)
+			if self.var_solo_bloq.get() and not bloq:
+				continue
+			txt = f"{orig} {dest} {dist} {'bloqueado' if bloq else 'libre'}".lower()
+			if filtro and filtro not in txt:
+				continue
+			tag = "odd" if (visible % 2) else "even"
+			estado_txt = "BLOQUEADO" if bloq else "LIBRE"
+			self.tree.insert("", "end", values=(orig, dest, dist, estado_txt), tags=(tag,))
+			visible += 1
+		self.lbl_count.config(text=f"{visible} visibles (filtrado)")
+
+	def _on_select(self, event=None):
+		items = self.tree.selection()
+		if not items:
+			self.lbl_info.config(text="Selecciona una fila o haz doble clic para alternar bloqueo")
+			return
+		idx = self.tree.index(items[0])
+		if 0 <= idx < len(self._rows):
+			_s, link, orig, dest, dist = self._rows[idx]
+			bloq = "Sí" if link.get("blocked", False) else "No"
+			self.lbl_info.config(text=f"{orig} -> {dest} | d={dist} | Bloqueado: {bloq}")
+
+	def _on_double_click(self, event=None):
+		items = self.tree.selection()
+		if not items:
+			return
+		idx = self.tree.index(items[0])
+		if 0 <= idx < len(self._rows):
+			_s, link, *_ = self._rows[idx]
+			self._cambiar_sel(not link.get("blocked", False))
+
+	def _exportar_bloqueos(self):
+		data = self.get_data() if callable(self.get_data) else None
+		if not data:
+			messagebox.showinfo("Info", "No hay datos para exportar")
+			return
+		bloqueados = []
+		for c in data.get('constellations', []):
+			for s in c.get('starts', []):
+				for link in s.get('linkedTo', []):
+					if link.get('blocked', False):
+						bloqueados.append({'origen': s.get('label'), 'starId': link.get('starId'), 'distance': link.get('distance')})
+		if not bloqueados:
+			messagebox.showinfo("Exportar", "No hay caminos bloqueados")
+			return
+		# Mostrar en un diálogo simple
+		win = tk.Toplevel(self)
+		win.title("Caminos bloqueados")
+		text = tk.Text(win, width=60, height=20)
+		text.pack(fill='both', expand=True)
+		for item in bloqueados:
+			text.insert('end', f"{item['origen']} -> starId={item['starId']} (dist={item['distance']})\n")
+		text.config(state='disabled')
+
+	def _sel_indices(self):
+		sels = self.tree.selection()
+		idxs = []
+		for s in sels:
+			try:
+				idx = self.tree.index(s)
+				idxs.append(idx)
+			except Exception:
+				pass
+		return idxs
+
+	def _bloquear_sel(self):
+		self._cambiar_sel(True)
+
+	def _habilitar_sel(self):
+		self._cambiar_sel(False)
+
+	def _cambiar_sel(self, bloquear):
+		idxs = self._sel_indices()
+		if not idxs:
+			messagebox.showinfo("Info", "Selecciona al menos un camino en la lista")
+			return
+		cambios = 0
+		for idx in idxs:
+			if 0 <= idx < len(self._rows):
+				star_obj, link_obj, origen_label, dest_label, _dist = self._rows[idx]
+				if bool(link_obj.get("blocked", False)) != bloquear:
+					# Bloquear/habilitar enlace seleccionado
+					link_obj["blocked"] = bool(bloquear)
+					cambios += 1
+					# Intentar reflejar simétricamente en el destino si existe el enlace inverso
+					data = self.get_data() if callable(self.get_data) else None
+					if data and "constellations" in data:
+						for c in data["constellations"]:
+							for s in c.get("starts", []):
+								if s.get("label") == dest_label:
+									for l2 in s.get("linkedTo", []):
+										# l2 apunta al origen?
+										target_id = l2.get("starId")
+										# Resolver nombre del target
+										# Construir id->label rápido
+										# (para evitar recomputar fuera, resolvemos inline)
+										label_target = None
+										for c2 in data["constellations"]:
+											for s2 in c2.get("starts", []):
+												if s2.get("id") == target_id:
+													label_target = s2.get("label")
+													break
+											if label_target:
+												break
+										if label_target == origen_label:
+											l2["blocked"] = bool(bloquear)
+											break
+		if cambios:
+			self._cargar()
+			if callable(self.on_change):
+				try:
+					self.on_change()
+				except Exception:
+					pass
+		else:
+			messagebox.showinfo("Info", "No hubo cambios en los caminos seleccionados")

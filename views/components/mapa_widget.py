@@ -1,6 +1,7 @@
 # components/mapa_widget.py
 import os
 import sys
+import math
 import tkinter as tk
 from tkinter import messagebox
 
@@ -33,6 +34,10 @@ class MapaWidget(tk.Frame):
         self.show_grid = True
         self.grid_spacing = 50       # pixels between grid lines
         self.label_spacing = 100     # pixels between labels (to reduce noise)
+        # highlight state
+        self._highlight_items = []
+        self._label_to_pos = {}
+        self._label_to_const = {}
 
     def clear(self):
         self.canvas.delete("all")
@@ -143,6 +148,9 @@ class MapaWidget(tk.Frame):
                 sid = s.get("id")
                 x1, y1 = to_canvas(s["coordenates"]["x"], s["coordenates"]["y"])
                 for link in s.get("linkedTo", []):
+                    # omitir caminos bloqueados (por seguridad)
+                    if link.get("blocked", False):
+                        continue
                     target_id = link.get("starId")
                     tgt = id_map.get(target_id)
                     if tgt:
@@ -158,6 +166,8 @@ class MapaWidget(tk.Frame):
 
         # dibujar estrellas y etiquetas (resaltar solapamientos en rojo)
         pos_map = {}
+        label_to_pos = {}
+        label_to_const = {}
         for ci, c in enumerate(const_data):
             color = colors[ci % len(colors)]
             for s in c.get("starts", []):
@@ -165,6 +175,10 @@ class MapaWidget(tk.Frame):
                 x, y = to_canvas(coord[0], coord[1])
                 sid = s.get("id")
                 pos_map[sid] = (x, y)
+                label = s.get("label")
+                if label:
+                    label_to_pos[label] = (x, y)
+                    label_to_const[label] = c.get("name")
                 r = max(3, s.get("radius", 1) * 4)
                 # rojo si coord compartida por >1 estrella
                 is_hyper = bool(s.get("hypergiant"))
@@ -241,112 +255,3 @@ class MapaWidget(tk.Frame):
             messagebox.showwarning("Advertencia",
                                    f"Faltan definiciones de estrellas referenciadas: {sorted(missing)}\n"
                                    "Agrega esas estrellas al JSON o elimina sus enlaces para que las vías se dibujen.")
-
-    # --- Route overlay helpers ---
-    def clear_route(self):
-        try:
-            self.canvas.delete('route_overlay')
-        except Exception:
-            pass
-
-    def draw_route(self, route_labels: list, color: str = '#ffd700', width: int = 4):
-        """Dibuja una ruta sobre el mapa dada una lista de labels (nombres de estrellas)."""
-        if not route_labels or not isinstance(route_labels, list):
-            return
-        if not hasattr(self, 'pos_map') or not self.pos_map:
-            return
-        self.clear_route()
-        # draw segments
-        last_coords = None
-        for lbl in route_labels:
-            sid = self.label_to_id.get(lbl)
-            if sid is None:
-                # try to match by id-like label
-                try:
-                    sid = int(lbl)
-                except Exception:
-                    sid = None
-            coords = None
-            if sid is not None:
-                coords = self.pos_map.get(sid)
-            if coords:
-                x, y = coords
-                # marker
-                self.canvas.create_oval(x - 6, y - 6, x + 6, y + 6, outline=color, width=2, tag='route_overlay')
-                if last_coords:
-                    x0, y0 = last_coords
-                    self.canvas.create_line(x0, y0, x, y, fill=color, width=width, capstyle='round', tag='route_overlay')
-                last_coords = (x, y)
-
-    def animate_route(self, route_labels: list, step_delay_ms: int = 600, marker_color: str = '#00ff00', line_color: str = '#ffd700', line_width: int = 4):
-        """Anima el movimiento de un marcador (el burro) siguiendo `route_labels`.
-
-        step_delay_ms: milisegundos entre pasos.
-        El método usa `after` de Tkinter y deja trazas con tags 'route_anim' y 'burro_marker'.
-        """
-        if not route_labels or not isinstance(route_labels, list):
-            return
-        if not hasattr(self, 'pos_map') or not self.pos_map:
-            return
-
-        # cancelar animación previa si existe
-        try:
-            if hasattr(self, '_anim_after_id') and self._anim_after_id is not None:
-                self.after_cancel(self._anim_after_id)
-        except Exception:
-            pass
-
-        self.clear_route()
-        # prepare coords list
-        coords_list = []
-        for lbl in route_labels:
-            sid = self.label_to_id.get(lbl)
-            if sid is None:
-                try:
-                    sid = int(lbl)
-                except Exception:
-                    sid = None
-            if sid is not None:
-                coords = self.pos_map.get(sid)
-            else:
-                coords = None
-            if coords:
-                coords_list.append(coords)
-
-        if not coords_list:
-            return
-
-        # draw incremental path and a moving marker
-        marker_id = None
-        path_ids = []
-
-        def step(i):
-            nonlocal marker_id
-            # end condition
-            if i >= len(coords_list):
-                self._anim_after_id = None
-                return
-
-            x, y = coords_list[i]
-            # draw marker (remove previous)
-            if marker_id is not None:
-                try:
-                    self.canvas.delete(marker_id)
-                except Exception:
-                    pass
-            marker_id = self.canvas.create_oval(x - 8, y - 8, x + 8, y + 8, fill=marker_color, outline='black', width=1, tag='burro_marker')
-
-            # draw segment from previous to current
-            if i > 0:
-                x0, y0 = coords_list[i - 1]
-                line_id = self.canvas.create_line(x0, y0, x, y, fill=line_color, width=line_width, capstyle='round', tag='route_anim')
-                path_ids.append(line_id)
-
-            # schedule next
-            try:
-                self._anim_after_id = self.after(step_delay_ms, lambda: step(i + 1))
-            except Exception:
-                self._anim_after_id = None
-
-        # start animation at index 0
-        step(0)
