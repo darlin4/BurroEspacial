@@ -9,9 +9,10 @@ class PanelCalculoRuta(tk.Frame):
 	Genera también un log detallado estilo consola para depuración que puede imprimirse en terminal.
 	"""
 
-	def __init__(self, master, grafo_provider, mapa_widget=None):
+	def __init__(self, master, grafo_provider, data_provider=None, mapa_widget=None):
 		super().__init__(master)
 		self.grafo_provider = grafo_provider
+		self.data_provider = data_provider
 		self.mapa_widget = mapa_widget
 		self._build_ui()
 
@@ -48,6 +49,13 @@ class PanelCalculoRuta(tk.Frame):
 		self.txt_reporte = tk.Text(self, height=30, wrap="word", bg="#101010", fg="#eaeaea")
 		self.txt_reporte.pack(fill="both", expand=True, padx=8, pady=6)
 		self._config_tags()
+
+		# Botón de reporte detallado
+		frm_btns = ttk.Frame(self)
+		frm_btns.pack(fill="x", padx=8, pady=(0,8))
+		self.btn_reporte = ttk.Button(frm_btns, text="Reporte detallado", command=self._abrir_reporte_detallado)
+		self.btn_reporte.pack(side="right")
+		self._ultimo_resultado = None
 
 	def _config_tags(self):
 		t = self.txt_reporte
@@ -101,6 +109,7 @@ class PanelCalculoRuta(tk.Frame):
 			self._imprimir("Origen inválido o inexistente en grafo", "critico")
 			return
 		resultado, log = self._calcular_ruta_maxima(grafo, origen, energia, pasto, edad, salud_ini)
+		self._ultimo_resultado = resultado
 		self._mostrar_resultado(resultado, log)
 		try:
 			print(log)
@@ -220,6 +229,21 @@ class PanelCalculoRuta(tk.Frame):
 		log(f"   Energía final: {max(0, energia_final):.1f}% | Pasto final: {max(0, pasto_final):.1f}kg")
 		log(f"   Estado final: {estado_final}")
 
+		# Datos de galaxias visitadas usando el data_provider
+		galaxias = []
+		if self.data_provider:
+			data = self.data_provider() or {}
+			consts = data.get('constellations', [])
+			label_to_gal = {}
+			for c in consts:
+				gname = c.get('name')
+				for s in c.get('starts', []):
+					label_to_gal[s.get('label')] = gname
+			for lab in mejor_ruta:
+				gal = label_to_gal.get(lab)
+				if gal and gal not in galaxias:
+					galaxias.append(gal)
+
 		resultado = {
 			"ruta": mejor_ruta,
 			"estrellas_visitadas": len(mejor_ruta),
@@ -230,7 +254,8 @@ class PanelCalculoRuta(tk.Frame):
 			"energia_consumida_total": energia_consumida_total,
 			"pasto_consumido_total": pasto_consumido_total,
 			"consumos_detallados": mejor_detallados,
-			"salud_inicial": ini
+			"salud_inicial": ini,
+			"galaxias": galaxias
 		}
 		return resultado, "\n".join(log_lines)
 
@@ -244,14 +269,23 @@ class PanelCalculoRuta(tk.Frame):
 		self._imprimir(f"Distancia total: {r['distancia_total']:.1f}", "item")
 		self._imprimir(f"Energía consumida: {r['energia_consumida_total']:.1f} / restante {r['energia_final']:.1f}", "item")
 		self._imprimir(f"Pasto consumido: {r['pasto_consumido_total']:.2f} kg / restante {r['pasto_final']:.2f} kg", "item")
-		self._imprimir("Ruta:", "titulo")
+		self._imprimir("Galaxias:", "titulo")
+		self._imprimir(", ".join(r.get('galaxias', [])) or "(ninguna)", "item")
+		self._imprimir("Ruta (orden):", "titulo")
 		self._imprimir(" -> ".join(r['ruta']) or "(vacía)", "ok")
+		self._imprimir("Consumos por salto (alimento y energía):", "titulo")
 		self._imprimir("Pasos detallados:", "titulo")
-		for c in r['consumos_detallados']:
-			linea = (f"{c['origen']} -> {c['destino']} | d={c['distancia']:.1f} | "
-					 f"E-{c['consumo_energia']:.2f} (rest {c['energia_restante']:.2f}) | "
-					 f"P-{c['consumo_pasto']:.2f} (rest {c['pasto_restante']:.2f})")
+		invest_tiempo_total = 0.0
+		for idx, c in enumerate(r['consumos_detallados'], start=1):
+			# tiempo invertido en investigación: suponer 0.3 * distancia / (energia_restante+1) como ejemplo (placeholder SOLID: estrategia posible)
+			tiempo = 0.3 * c['distancia'] / (c['energia_restante'] + 1)
+			invest_tiempo_total += tiempo
+			linea = (f"{idx:02d}. {c['origen']} -> {c['destino']} | d={c['distancia']:.1f} | "
+					 f"E usó {c['consumo_energia']:.2f} (rest {c['energia_restante']:.2f}) | "
+					 f"P usó {c['consumo_pasto']:.2f} (rest {c['pasto_restante']:.2f}) | "
+					 f"tInvestigación={tiempo:.2f}")
 			self._imprimir(linea, "item")
+		self._imprimir(f"Tiempo total investigación estimado: {invest_tiempo_total:.2f}", "resaltado")
 		self._imprimir("="*40, "titulo")
 		self._imprimir("LOG CONSOLA:", "titulo")
 		for line in log_text.splitlines():
@@ -261,6 +295,63 @@ class PanelCalculoRuta(tk.Frame):
 			elif line.startswith("❌"):
 				tag = "critico"
 			self._imprimir(line, tag)
+
+	def _abrir_reporte_detallado(self):
+		if not self._ultimo_resultado:
+			return
+		r = self._ultimo_resultado
+		win = tk.Toplevel(self)
+		win.title("Reporte de Viaje Detallado")
+		win.geometry("800x520")
+		# Fade-in sencillo
+		try:
+			win.attributes("-alpha", 0.0)
+			def fade(i=0):
+				alpha = min(1.0, i/10)
+				win.attributes("-alpha", alpha)
+				if alpha < 1.0:
+					win.after(35, lambda: fade(i+1))
+			fade()
+		except Exception:
+			pass
+		cols = ("#", "Estrella", "Galaxia", "Distancia", "Energía", "Pasto", "Investigación")
+		tree = ttk.Treeview(win, columns=cols, show="headings")
+		for c in cols:
+			tree.heading(c, text=c)
+			tree.column(c, width=110, anchor="center")
+		tree.column("Estrella", width=160, anchor="w")
+		tree.column("Galaxia", width=160, anchor="w")
+		tree.pack(fill="both", expand=True, padx=8, pady=8)
+		# construir mapa label->galaxia
+		gal_by_label = {}
+		if self.data_provider:
+			data = self.data_provider() or {}
+			for c in data.get('constellations', []):
+				for s in c.get('starts', []):
+					gal_by_label[s.get('label')] = c.get('name')
+		# fila de origen
+		if r['ruta']:
+			ori = r['ruta'][0]
+			tree.insert("", "end", values=("00", ori, gal_by_label.get(ori, ""), "-", "-", "-", "0.00"))
+		# filas de saltos
+		invest_total = 0.0
+		for i, c in enumerate(r['consumos_detallados'], start=1):
+			ori = c['origen']
+			dst = c['destino']
+			dist = f"{c['distancia']:.1f}"
+			ener = f"{c['consumo_energia']:.2f}"
+			past = f"{c['consumo_pasto']:.2f}"
+			tiempo = 0.3 * c['distancia'] / (c['energia_restante'] + 1)
+			invest_total += tiempo
+			gal = gal_by_label.get(dst, "")
+			tree.insert("", "end", values=(f"{i:02d}", dst, gal, dist, ener, past, f"{tiempo:.2f}"))
+		# totales
+		footer = ttk.Label(win, text=(
+			f"Estrellas: {r['estrellas_visitadas']} | Galaxias: {len(r.get('galaxias', []))} | "
+			f"Distancia total: {r['distancia_total']:.1f} | Energía usada: {r['energia_consumida_total']:.1f} | "
+			f"Pasto usado: {r['pasto_consumido_total']:.2f} | Investigación: {invest_total:.2f}"
+		))
+		footer.pack(fill="x", padx=8, pady=(0,8))
 
 	def _imprimir(self, texto, tag=None):
 		self.txt_reporte.insert(tk.END, texto + "\n", tag)

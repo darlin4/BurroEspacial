@@ -1,6 +1,7 @@
 # components/mapa_widget.py
 import os
 import sys
+import math
 import tkinter as tk
 from tkinter import messagebox
 
@@ -30,6 +31,10 @@ class MapaWidget(tk.Frame):
         self.show_grid = True
         self.grid_spacing = 50       # pixels between grid lines
         self.label_spacing = 100     # pixels between labels (to reduce noise)
+        # highlight state
+        self._highlight_items = []
+        self._label_to_pos = {}
+        self._label_to_const = {}
 
     def clear(self):
         self.canvas.delete("all")
@@ -158,6 +163,8 @@ class MapaWidget(tk.Frame):
 
         # dibujar estrellas y etiquetas (resaltar solapamientos en rojo)
         pos_map = {}
+        label_to_pos = {}
+        label_to_const = {}
         for ci, c in enumerate(const_data):
             color = colors[ci % len(colors)]
             for s in c.get("starts", []):
@@ -165,6 +172,10 @@ class MapaWidget(tk.Frame):
                 x, y = to_canvas(coord[0], coord[1])
                 sid = s.get("id")
                 pos_map[sid] = (x, y)
+                label = s.get("label")
+                if label:
+                    label_to_pos[label] = (x, y)
+                    label_to_const[label] = c.get("name")
                 r = max(3, s.get("radius", 1) * 4)
                 # rojo si coord compartida por >1 estrella
                 is_hyper = bool(s.get("hypergiant"))
@@ -229,3 +240,162 @@ class MapaWidget(tk.Frame):
             messagebox.showwarning("Advertencia",
                                    f"Faltan definiciones de estrellas referenciadas: {sorted(missing)}\n"
                                    "Agrega esas estrellas al JSON o elimina sus enlaces para que las vías se dibujen.")
+
+        # guardar mapas para resaltado
+        self._label_to_pos = label_to_pos
+        self._label_to_const = label_to_const
+
+    # ==== Resaltado de rutas con animación ====
+    def clear_highlights(self):
+        for item in self._highlight_items:
+            try:
+                self.canvas.delete(item)
+            except Exception:
+                pass
+        self._highlight_items.clear()
+
+    def highlight_route(self, labels, color="#00eaff", animate=True, pulse=True):
+        if not labels:
+            return
+        self.clear_highlights()
+        # pulso en nodos
+        if pulse:
+            for lab in labels:
+                pos = self._label_to_pos.get(lab)
+                if pos:
+                    self._pulse_star(pos, base_color=color)
+        # animar segmentos
+        for i in range(len(labels) - 1):
+            p1 = self._label_to_pos.get(labels[i])
+            p2 = self._label_to_pos.get(labels[i + 1])
+            if p1 and p2:
+                if animate:
+                    self._animate_segment(p1, p2, color)
+                else:
+                    line = self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], fill=color, width=4)
+                    self._highlight_items.append(line)
+
+    def _animate_segment(self, p1, p2, color):
+        """Animación mejorada: línea que crece con easing + cometa con cola."""
+        x1, y1 = p1
+        x2, y2 = p2
+        # Línea base que se extiende con easing
+        line = self.canvas.create_line(x1, y1, x1, y1, fill=color, width=4, capstyle=tk.ROUND)
+        self._highlight_items.append(line)
+        # Cometa (cabeza) que recorre el segmento con una pequeña cola
+        comet = self.canvas.create_oval(x1-4, y1-4, x1+4, y1+4, fill=color, outline="", width=0)
+        self._highlight_items.append(comet)
+        tail_marks = []
+        steps = 36
+        idx = {"i": 0}
+
+        def ease_in_out(t):
+            # Suavizado cúbico
+            return 3*t*t - 2*t*t*t
+
+        def step():
+            i = idx["i"] + 1
+            idx["i"] = i
+            raw = min(1.0, i / steps)
+            t = ease_in_out(raw)
+            xn = x1 + (x2 - x1) * t
+            yn = y1 + (y2 - y1) * t
+            try:
+                # Extiende la línea
+                self.canvas.coords(line, x1, y1, xn, yn)
+                # Mueve la cabeza del cometa
+                self.canvas.coords(comet, xn-4, yn-4, xn+4, yn+4)
+                # Deja una marca de cola ocasional
+                if i % 3 == 0:
+                    dot = self.canvas.create_oval(xn-2, yn-2, xn+2, yn+2, fill=color, outline="")
+                    tail_marks.append(dot)
+                    self._highlight_items.append(dot)
+            except Exception:
+                return
+            if raw < 1.0:
+                self.after(18, step)
+            else:
+                # Atenuar la cola y eliminarla suavemente
+                self._fade_tail(tail_marks)
+                # Pequeño glow al llegar al punto final
+                self._glow_star((x2, y2), base_color=color)
+        step()
+
+    def _fade_tail(self, items):
+        # Simula desvanecido eliminando puntitos de la cola gradualmente
+        if not items:
+            return
+        try:
+            it = items.pop(0)
+            self.canvas.delete(it)
+        except Exception:
+            pass
+        self.after(30, lambda: self._fade_tail(items))
+
+    def _pulse_star(self, pos, base_color="#00eaff"):
+        # pulso mejorado: múltiples anillos con desfase y pequeño brillo central
+        x, y = pos
+        max_r = 18
+        rings = 3
+        duration = 320
+        core = self.canvas.create_oval(x-3, y-3, x+3, y+3, outline="", fill=base_color)
+        self._highlight_items.append(core)
+        def fade_core(n=8):
+            if n <= 0:
+                try:
+                    self.canvas.delete(core)
+                except Exception:
+                    pass
+                return
+            # Alterna tamaño para simular parpadeo
+            r = 3 + (8-n)//2
+            try:
+                self.canvas.coords(core, x-r, y-r, x+r, y+r)
+            except Exception:
+                return
+            self.after(40, lambda: fade_core(n-1))
+        fade_core()
+        for k in range(rings):
+            delay = k * 140
+            self.after(delay, lambda rr=0: self._spawn_pulse(x, y, max_r, base_color, duration))
+
+    def _spawn_pulse(self, x, y, max_r, color, duration):
+        oval = self.canvas.create_oval(x, y, x, y, outline=color, width=2)
+        self._highlight_items.append(oval)
+        steps = 12
+        idx = {"i": 0}
+
+        def step():
+            i = idx["i"] + 1
+            idx["i"] = i
+            t = min(1.0, i / steps)
+            r = max_r * t
+            try:
+                self.canvas.coords(oval, x - r, y - r, x + r, y + r)
+                if i == steps:
+                    self.canvas.delete(oval)
+                else:
+                    self.after(int(duration / steps), step)
+            except Exception:
+                return
+        step()
+
+    def _glow_star(self, pos, base_color="#00eaff"):
+        # breve resplandor al alcanzar un nodo
+        x, y = pos
+        glow = self.canvas.create_oval(x-7, y-7, x+7, y+7, outline=base_color, width=3)
+        self._highlight_items.append(glow)
+        def fade(n=6):
+            if n <= 0:
+                try:
+                    self.canvas.delete(glow)
+                except Exception:
+                    pass
+                return
+            r = 7 + (6-n)
+            try:
+                self.canvas.coords(glow, x-r, y-r, x+r, y+ r)
+            except Exception:
+                return
+            self.after(40, lambda: fade(n-1))
+        fade()

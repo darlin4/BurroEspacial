@@ -217,7 +217,12 @@ class MainWindow(tk.Tk):
         top = tk.Toplevel(self)
         top.title('Ruta máxima antes de morir')
         top.geometry('720x640')
-        panel = PanelCalculoRuta(top, grafo_provider=self._grafo_desde_cargado)
+        panel = PanelCalculoRuta(
+            top,
+            grafo_provider=self._grafo_desde_cargado,
+            data_provider=lambda: getattr(self.mapa, 'data', None),
+            mapa_widget=self.mapa
+        )
         panel.pack(fill='both', expand=True)
 
     # === Abrir gestión de caminos ===
