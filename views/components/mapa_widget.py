@@ -140,6 +140,9 @@ class MapaWidget(tk.Frame):
                 sid = s.get("id")
                 x1, y1 = to_canvas(s["coordenates"]["x"], s["coordenates"]["y"])
                 for link in s.get("linkedTo", []):
+                    # omitir caminos bloqueados (por seguridad)
+                    if link.get("blocked", False):
+                        continue
                     target_id = link.get("starId")
                     tgt = id_map.get(target_id)
                     if tgt:
